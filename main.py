@@ -1,6 +1,6 @@
-# main.py — deployable FastAPI backend for recipe extraction
+# main.py — deployable FastAPI backend for recipe extraction with fallback upload option
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from typing import List, Optional
 import uuid
@@ -27,6 +27,41 @@ class Recipe(BaseModel):
     steps: List[str]
     cook_time_minutes: Optional[int]
 
+def extract_recipe_from_file(file_path: str) -> Recipe:
+    with open(file_path, "rb") as f:
+        transcript = openai.Audio.transcribe("whisper-1", f)["text"]
+
+    prompt = f"""
+    Extract a recipe in structured JSON format from the following transcript:
+
+    {transcript}
+
+    Format:
+    {{
+      "title": str,
+      "ingredients": [{{"name": str, "quantity": str}}],
+      "steps": [str],
+      "cook_time_minutes": int
+    }}
+    """
+
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a recipe parser."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    data = json.loads(response.choices[0].message.content)
+
+    return Recipe(
+        id=str(uuid.uuid4()),
+        title=data["title"],
+        ingredients=[Ingredient(**item) for item in data["ingredients"]],
+        steps=data["steps"],
+        cook_time_minutes=data["cook_time_minutes"]
+    )
+
 @app.post("/generate-recipe", response_model=Recipe)
 def generate_recipe(video: VideoRequest):
     if not video.url:
@@ -45,39 +80,27 @@ def generate_recipe(video: VideoRequest):
             print("yt-dlp stderr:", result.stderr)
             result.check_returncode()
 
-            with open(video_path, "rb") as f:
-                transcript = openai.Audio.transcribe("whisper-1", f)["text"]
+            return extract_recipe_from_file(video_path)
 
-        prompt = f"""
-        Extract a recipe in structured JSON format from the following transcript:
-
-        {transcript}
-
-        Format:
-        {{
-          "title": str,
-          "ingredients": [{{"name": str, "quantity": str}}],
-          "steps": [str],
-          "cook_time_minutes": int
-        }}
-        """
-
-        response = openai.ChatCompletion.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a recipe parser."},
-                {"role": "user", "content": prompt}
-            ]
+    except subprocess.CalledProcessError as e:
+        print("yt-dlp failed. Asking for manual upload.")
+        raise HTTPException(
+            status_code=422,
+            detail="This video requires manual upload. Please download the video and use /upload-video instead."
         )
-        data = json.loads(response.choices[0].message.content)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
-        return Recipe(
-            id=str(uuid.uuid4()),
-            title=data["title"],
-            ingredients=[Ingredient(**item) for item in data["ingredients"]],
-            steps=data["steps"],
-            cook_time_minutes=data["cook_time_minutes"]
-        )
+@app.post("/upload-video", response_model=Recipe)
+def upload_video(file: UploadFile = File(...)):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            tmp.write(file.file.read())
+            tmp_path = tmp.name
+
+        return extract_recipe_from_file(tmp_path)
 
     except Exception as e:
         import traceback
