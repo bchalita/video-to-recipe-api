@@ -1,5 +1,5 @@
 fastapi
 uvicorn
 openai
-yt-dlp
+yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 pydantic
