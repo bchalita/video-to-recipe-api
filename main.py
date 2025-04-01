@@ -1,4 +1,4 @@
-# main.py — re-enabling Whisper + GPT-4 Vision fallback with updated model name and JSON validation
+# main.py — updated GPT-4o prompt to enforce raw JSON-only response
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -41,7 +41,7 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
         messages=[
             {"role": "system", "content": "You are a recipe analysis assistant."},
             {"role": "user", "content": [
-                {"type": "text", "text": "These are frames from a recipe video. Please extract a recipe with title, ingredients (with quantities), steps, and estimated cook time."},
+                {"type": "text", "text": "These are frames from a recipe video. Respond only with valid JSON — no explanations, no markdown, no preamble. Use this format strictly:\n\n{\n  \"title\": str,\n  \"ingredients\": [ { \"name\": str, \"quantity\": str } ],\n  \"steps\": [str],\n  \"cook_time_minutes\": int\n}"},
                 *image_messages
             ]}
         ],
