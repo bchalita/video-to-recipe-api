@@ -1,4 +1,4 @@
-# main.py — re-enabling Whisper + GPT-4 Vision fallback with Whisper failure handling
+# main.py — re-enabling Whisper + GPT-4 Vision fallback with updated model name
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -37,7 +37,7 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     ]
 
     response = client.chat.completions.create(
-        model="gpt-4-vision-preview",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a recipe analysis assistant."},
             {"role": "user", "content": [
