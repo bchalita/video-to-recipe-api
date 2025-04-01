@@ -1,4 +1,4 @@
-# main.py — enhanced GPT vision fallback with robustness against weak frame output
+# main.py — stronger fallback prompting and graceful handling of ambiguous frame content
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -67,9 +67,9 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     # fallback if GPT sees nothing useful in vision summaries
     if not summarized_steps.strip() or any(term in summarized_steps.lower() for term in ["unclear", "can't tell", "unknown", "no food"]):
         fallback_prompt = [
-            {"role": "system", "content": "You are a recipe generation assistant."},
+            {"role": "system", "content": "You are a recipe assistant. Your job is to generate a structured JSON recipe from the images provided. Even if parts of the process are unclear, make your best guess based on visual evidence and cooking knowledge. Do not reject the task."},
             {"role": "user", "content": [
-                {"type": "text", "text": "These are frames from a cooking video. Generate a structured JSON recipe based on what is seen."},
+                {"type": "text", "text": "Here are frames from a cooking video. Provide a structured recipe in JSON format that represents what is most likely being prepared."},
                 *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in image_files]
             ]}
         ]
@@ -106,6 +106,9 @@ Respond in this format only:
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
+        # check for polite refusals
+        if any(x in raw_output.lower() for x in ["does not contain a recipe", "cannot extract", "doesn't include ingredients"]):
+            raise HTTPException(status_code=422, detail="Video appears to contain no recognizable recipe content.")
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
 
     return Recipe(
