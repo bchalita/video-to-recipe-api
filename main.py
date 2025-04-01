@@ -1,4 +1,4 @@
-# main.py — re-enabling Whisper + GPT-4 Vision fallback with updated model name
+# main.py — re-enabling Whisper + GPT-4 Vision fallback with updated model name and JSON validation
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -48,7 +48,11 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
         max_tokens=1000
     )
 
-    data = json.loads(response.choices[0].message.content)
+    raw_output = response.choices[0].message.content.strip()
+    try:
+        data = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
 
     return Recipe(
         id=str(uuid.uuid4()),
@@ -99,7 +103,11 @@ Format:
             {"role": "user", "content": prompt}
         ]
     )
-    data = json.loads(response.choices[0].message.content)
+    raw_output = response.choices[0].message.content.strip()
+    try:
+        data = json.loads(raw_output)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4: {raw_output}")
 
     return Recipe(
         id=str(uuid.uuid4()),
