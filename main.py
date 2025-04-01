@@ -132,7 +132,13 @@ def upload_video(file: UploadFile = File(...)):
             tmp.write(file.file.read())
             tmp_path = tmp.name
 
-        return use_gpt4_vision_on_frames(tmp_path)
+        with tempfile.TemporaryDirectory() as frame_dir:
+            subprocess.run([
+                "ffmpeg", "-i", tmp_path,
+                "-vf", "fps=1/2",
+                os.path.join(frame_dir, "frame_%03d.jpg")
+            ], check=True)
+            return use_gpt4_vision_on_frames(frame_dir)
 
     except Exception as e:
         import traceback
