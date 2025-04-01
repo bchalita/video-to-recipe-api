@@ -31,12 +31,8 @@ class Recipe(BaseModel):
     cook_time_minutes: Optional[int]
 
 def clean_json_output(raw: str) -> str:
-    cleaned = raw.strip()
-    if cleaned.startswith("```"):
-        # Remove starting ``` or ```json and ending ``` anywhere in the string
-        cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned)
-        cleaned = re.sub(r"\\s*```$", "", cleaned)
-    return cleaned.strip()
+    match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
+    return match.group(1).strip() if match else raw.strip()
 
 def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     image_files = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
