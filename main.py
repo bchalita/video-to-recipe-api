@@ -1,8 +1,8 @@
-# main.py — improved code block stripping for GPT-4o JSON output
+# main.py — multi-stage GPT vision flow with iterative reasoning and fallback parsing
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Union
 import uuid
 from openai import OpenAI
 import tempfile
@@ -34,21 +34,55 @@ def clean_json_output(raw: str) -> str:
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
     return match.group(1).strip() if match else raw.strip()
 
+def safe_parse_minutes(value) -> Optional[int]:
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
+
+def describe_frame_batches(frames: list[list[str]]) -> str:
+    descriptions = []
+    for i, batch in enumerate(frames):
+        messages = [
+            {"role": "system", "content": "You describe what is visually happening in a batch of video frames from a cooking video."},
+            {"role": "user", "content": [
+                {"type": "text", "text": f"What’s happening in this sequence of frames? Describe only the cooking actions, ingredients, and transitions."},
+                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in batch]
+            ]},
+        ]
+        result = client.chat.completions.create(
+            model="gpt-4o",
+            messages=messages,
+            max_tokens=500
+        )
+        descriptions.append(result.choices[0].message.content.strip())
+    return "\n".join(descriptions)
+
 def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     image_files = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
-    image_messages = [
-        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(img, 'rb').read()).decode()}"}}
-        for img in image_files
-    ]
+    batches = [image_files[i:i+4] for i in range(0, len(image_files), 4)]
+
+    summarized_steps = describe_frame_batches(batches)
+
+    prompt = f"""You are watching a cooking video, broken into described visual segments. Your task is to infer the dish that was made and write the recipe that was actually followed — not a general version. Use domain knowledge only to fill minor gaps (e.g. estimate cook time, typical quantities). Always prioritize what is visible. Respond with valid JSON only.
+
+Visual breakdown:
+{summarized_steps}
+
+Respond in this format only:
+{{
+  "title": str,
+  "ingredients": [{{"name": str, "quantity": str}}],
+  "steps": [str],
+  "cook_time_minutes": int
+}}
+"""
 
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are a recipe analysis assistant."},
-            {"role": "user", "content": [
-                {"type": "text", "text": "These are frames from a recipe video. Respond only with valid JSON — no explanations, no markdown, no preamble. Use this format strictly:\n\n{\n  \"title\": str,\n  \"ingredients\": [ { \"name\": str, \"quantity\": str } ],\n  \"steps\": [str],\n  \"cook_time_minutes\": int\n}"},
-                *image_messages
-            ]}
+            {"role": "system", "content": "You are a structured recipe writer."},
+            {"role": "user", "content": prompt}
         ],
         max_tokens=1000
     )
@@ -64,7 +98,7 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
         title=data["title"],
         ingredients=[Ingredient(**item) for item in data["ingredients"]],
         steps=data["steps"],
-        cook_time_minutes=data["cook_time_minutes"]
+        cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
     )
 
 def extract_recipe_from_file(file_path: str) -> Recipe:
@@ -119,7 +153,7 @@ Format:
         title=data["title"],
         ingredients=[Ingredient(**item) for item in data["ingredients"]],
         steps=data["steps"],
-        cook_time_minutes=data["cook_time_minutes"]
+        cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
     )
 
 @app.post("/generate-recipe", response_model=Recipe)
