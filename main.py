@@ -1,4 +1,4 @@
-# main.py — updated GPT-4o prompt to enforce raw JSON-only response
+# main.py — updated to strip markdown-style code block from GPT-4o JSON output
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -11,6 +11,7 @@ import os
 import json
 import shutil
 import base64
+import re
 
 app = FastAPI()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -28,6 +29,13 @@ class Recipe(BaseModel):
     ingredients: List[Ingredient]
     steps: List[str]
     cook_time_minutes: Optional[int]
+
+def clean_json_output(raw: str) -> str:
+    cleaned = raw.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?\\n", "", cleaned)
+        cleaned = re.sub(r"```$", "", cleaned)
+    return cleaned.strip()
 
 def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     image_files = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
@@ -48,7 +56,7 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
         max_tokens=1000
     )
 
-    raw_output = response.choices[0].message.content.strip()
+    raw_output = clean_json_output(response.choices[0].message.content)
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
@@ -103,7 +111,7 @@ Format:
             {"role": "user", "content": prompt}
         ]
     )
-    raw_output = response.choices[0].message.content.strip()
+    raw_output = clean_json_output(response.choices[0].message.content)
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
