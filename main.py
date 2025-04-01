@@ -124,3 +124,17 @@ Respond in this format only:
         steps=data["steps"],
         cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
     )
+
+@app.post("/upload-video", response_model=Recipe)
+def upload_video(file: UploadFile = File(...)):
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+            tmp.write(file.file.read())
+            tmp_path = tmp.name
+
+        return use_gpt4_vision_on_frames(tmp_path)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
