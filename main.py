@@ -1,4 +1,4 @@
-# main.py — re-enabling Whisper + GPT-4 Vision fallback after Tier 1 unlock
+# main.py — re-enabling Whisper + GPT-4 Vision fallback with Whisper failure handling
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -59,14 +59,18 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
     )
 
 def extract_recipe_from_file(file_path: str) -> Recipe:
-    with open(file_path, "rb") as f:
-        transcript = client.audio.transcriptions.create(
-            model="whisper-1",
-            file=f
-        ).text
+    transcript = ""
+    try:
+        with open(file_path, "rb") as f:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=f
+            ).text
+    except Exception as e:
+        print("Whisper failed or unsupported audio. Switching to GPT-4 Vision fallback.")
 
     if not transcript.strip():
-        print("Transcript is empty, switching to GPT-4 Vision fallback")
+        print("Transcript is empty or unavailable. Switching to GPT-4 Vision fallback.")
         with tempfile.TemporaryDirectory() as frame_dir:
             subprocess.run([
                 "ffmpeg", "-i", file_path,
