@@ -1,4 +1,4 @@
-# main.py — stronger fallback prompting and graceful handling of ambiguous frame content
+# main.py — vision fallback fixed for empty/useless transcripts
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -64,7 +64,6 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
 
     summarized_steps = describe_frame_batches(batches)
 
-    # fallback if GPT sees nothing useful in vision summaries
     if not summarized_steps.strip() or any(term in summarized_steps.lower() for term in ["unclear", "can't tell", "unknown", "no food"]):
         fallback_prompt = [
             {"role": "system", "content": "You are a recipe assistant. Your job is to generate a structured JSON recipe from the images provided. Even if parts of the process are unclear, make your best guess based on visual evidence and cooking knowledge. Do not reject the task."},
@@ -106,7 +105,6 @@ Respond in this format only:
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
-        # check for polite refusals
         if any(x in raw_output.lower() for x in ["does not contain a recipe", "cannot extract", "doesn't include ingredients"]):
             raise HTTPException(status_code=422, detail="Video appears to contain no recognizable recipe content.")
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
@@ -127,11 +125,12 @@ def extract_recipe_from_file(file_path: str) -> Recipe:
                 model="whisper-1",
                 file=f
             ).text
-    except Exception as e:
+    except Exception:
         print("Whisper failed or unsupported audio. Switching to GPT-4 Vision fallback.")
 
-    if not transcript.strip():
-        print("Transcript is empty or unavailable. Switching to GPT-4 Vision fallback.")
+    # fallback if transcript is useless
+    if not transcript or len(transcript.strip()) < 10 or transcript.strip().lower() in ["", "no speech detected", "unknown"]:
+        print("Transcript empty or not useful. Using GPT-4 Vision fallback.")
         with tempfile.TemporaryDirectory() as frame_dir:
             subprocess.run([
                 "ffmpeg", "-i", file_path,
@@ -152,7 +151,6 @@ Format:
   "cook_time_minutes": int
 }}
 """
-
     response = client.chat.completions.create(
         model="gpt-4",
         messages=[
