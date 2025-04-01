@@ -1,4 +1,4 @@
-# main.py — defensive parsing for GPT JSON structure
+# main.py — harden fallback prompt to force JSON from GPT-4 Vision
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -72,9 +72,9 @@ def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
 
     if not summarized_steps.strip() or any(term in summarized_steps.lower() for term in ["unclear", "can't tell", "unknown", "no food"]):
         fallback_prompt = [
-            {"role": "system", "content": "You are a recipe assistant. Your job is to generate a structured JSON recipe from the images provided. Even if parts of the process are unclear, make your best guess based on visual evidence and cooking knowledge. Do not reject the task."},
+            {"role": "system", "content": "You are a recipe assistant. Your job is to generate a structured JSON recipe from the provided frames. Even if parts of the process are unclear, make your best guess. You must respond ONLY with valid JSON, no commentary, no apologies, no preamble."},
             {"role": "user", "content": [
-                {"type": "text", "text": "Here are frames from a cooking video. Provide a structured recipe in JSON format that represents what is most likely being prepared."},
+                {"type": "text", "text": "Here are frames from a cooking video. Return your response ONLY in this exact format — without any explanation or markdown."},
                 *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in image_files]
             ]}
         ]
@@ -124,104 +124,3 @@ Respond in this format only:
         steps=data["steps"],
         cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
     )
-
-def extract_recipe_from_file(file_path: str) -> Recipe:
-    transcript = ""
-    try:
-        with open(file_path, "rb") as f:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=f
-            ).text
-    except Exception:
-        print("Whisper failed or unsupported audio. Switching to GPT-4 Vision fallback.")
-
-    if not transcript or len(transcript.strip()) < 10 or transcript.strip().lower() in ["", "no speech detected", "unknown"]:
-        print("Transcript empty or not useful. Using GPT-4 Vision fallback.")
-        with tempfile.TemporaryDirectory() as frame_dir:
-            subprocess.run([
-                "ffmpeg", "-i", file_path,
-                "-vf", "fps=1/2",
-                os.path.join(frame_dir, "frame_%03d.jpg")
-            ], check=True)
-            return use_gpt4_vision_on_frames(frame_dir)
-
-    prompt = f"""Extract a recipe in structured JSON format from the following transcript:
-
-{transcript}
-
-Format:
-{{
-  "title": str,
-  "ingredients": [{{"name": str, "quantity": str}}],
-  "steps": [str],
-  "cook_time_minutes": int
-}}
-"""
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a recipe parser."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-    raw_output = clean_json_output(response.choices[0].message.content)
-    try:
-        data = json.loads(raw_output)
-    except json.JSONDecodeError:
-        raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4: {raw_output}")
-
-    validate_recipe_fields(data)
-
-    return Recipe(
-        id=str(uuid.uuid4()),
-        title=data["title"],
-        ingredients=[Ingredient(**item) for item in data["ingredients"]],
-        steps=data["steps"],
-        cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
-    )
-
-@app.post("/generate-recipe", response_model=Recipe)
-def generate_recipe(video: VideoRequest):
-    if not video.url:
-        raise HTTPException(status_code=400, detail="Missing video URL")
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            video_path = os.path.join(tmpdir, "video.mp4")
-            result = subprocess.run(
-                ["yt-dlp", "-f", "mp4", "-o", video_path, video.url],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            print("yt-dlp stdout:", result.stdout)
-            print("yt-dlp stderr:", result.stderr)
-            result.check_returncode()
-
-            return extract_recipe_from_file(video_path)
-
-    except subprocess.CalledProcessError as e:
-        print("yt-dlp failed. Asking for manual upload.")
-        raise HTTPException(
-            status_code=422,
-            detail="This video requires manual upload. Please download the video and use /upload-video instead."
-        )
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/upload-video", response_model=Recipe)
-def upload_video(file: UploadFile = File(...)):
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-            tmp.write(file.file.read())
-            tmp_path = tmp.name
-
-        return extract_recipe_from_file(tmp_path)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
