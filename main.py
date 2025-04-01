@@ -1,4 +1,4 @@
-# main.py — vision fallback fixed for empty/useless transcripts
+# main.py — defensive parsing for GPT JSON structure
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -39,6 +39,12 @@ def safe_parse_minutes(value) -> Optional[int]:
         return int(value)
     except (ValueError, TypeError):
         return None
+
+def validate_recipe_fields(data: dict):
+    required = ["title", "ingredients", "steps"]
+    missing = [k for k in required if k not in data or not data[k]]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Missing fields in recipe: {', '.join(missing)}")
 
 def describe_frame_batches(frames: list[list[str]]) -> str:
     descriptions = []
@@ -109,6 +115,8 @@ Respond in this format only:
             raise HTTPException(status_code=422, detail="Video appears to contain no recognizable recipe content.")
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
 
+    validate_recipe_fields(data)
+
     return Recipe(
         id=str(uuid.uuid4()),
         title=data["title"],
@@ -128,7 +136,6 @@ def extract_recipe_from_file(file_path: str) -> Recipe:
     except Exception:
         print("Whisper failed or unsupported audio. Switching to GPT-4 Vision fallback.")
 
-    # fallback if transcript is useless
     if not transcript or len(transcript.strip()) < 10 or transcript.strip().lower() in ["", "no speech detected", "unknown"]:
         print("Transcript empty or not useful. Using GPT-4 Vision fallback.")
         with tempfile.TemporaryDirectory() as frame_dir:
@@ -163,6 +170,8 @@ Format:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4: {raw_output}")
+
+    validate_recipe_fields(data)
 
     return Recipe(
         id=str(uuid.uuid4()),
