@@ -1,4 +1,4 @@
-# main.py — updated to strip markdown-style code block from GPT-4o JSON output
+# main.py — improved code block stripping for GPT-4o JSON output
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from pydantic import BaseModel
@@ -33,8 +33,9 @@ class Recipe(BaseModel):
 def clean_json_output(raw: str) -> str:
     cleaned = raw.strip()
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\\n", "", cleaned)
-        cleaned = re.sub(r"```$", "", cleaned)
+        # Remove starting ``` or ```json and ending ``` anywhere in the string
+        cleaned = re.sub(r"^```(?:json)?\\s*", "", cleaned)
+        cleaned = re.sub(r"\\s*```$", "", cleaned)
     return cleaned.strip()
 
 def use_gpt4_vision_on_frames(frames_dir: str) -> Recipe:
