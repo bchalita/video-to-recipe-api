@@ -1,6 +1,6 @@
-# main.py — full code with Airtable sync on recipe and user upload
+# main.py — full code with Airtable sync on recipe and user upload + user signup
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional
@@ -66,6 +66,11 @@ class Recipe(BaseModel):
     ingredients: List[Ingredient]
     steps: List[str]
     cook_time_minutes: int
+
+class SignupRequest(BaseModel):
+    name: str
+    email: str
+    password: str
 
 def clean_json_output(raw: str) -> str:
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
@@ -275,3 +280,9 @@ def list_recipes(db: Session = Depends(get_db)):
             cook_time_minutes=r.cook_time_minutes
         ) for r in rows
     ]
+
+@app.post("/signup")
+def signup(name: str = Form(...), email: str = Form(...), password: str = Form(...)):
+    user_id = str(uuid.uuid4())
+    sync_user_to_airtable(user_id=user_id, email=email, name=name, provider="email")
+    return {"success": True, "user_id": user_id}
