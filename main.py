@@ -1,4 +1,4 @@
-# main.py — full code with DB integration, recipe parsing, and estimation logic
+# main.py — full code with Airtable sync on recipe and user upload
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,6 +12,8 @@ import os
 import json
 import base64
 import re
+import requests
+from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
@@ -27,6 +29,10 @@ app.add_middleware(
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_RECIPES_TABLE = "Recipes"
+AIRTABLE_USERS_TABLE = "Users"
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
@@ -97,7 +103,7 @@ def safe_parse_minutes(value) -> Optional[int]:
         return None
 
 def validate_recipe_fields(data: dict):
-    required = ["title", "ingredients", "steps"]
+    required = ["title", "ingredients", "steps", "cook_time_minutes"]
     missing = [k for k in required if k not in data or not data[k]]
     if missing:
         raise HTTPException(status_code=422, detail=f"Missing fields in recipe: {', '.join(missing)}")
@@ -167,21 +173,61 @@ Respond in this format only:
     try:
         data = json.loads(raw_output)
     except json.JSONDecodeError:
-        if any(x in raw_output.lower() for x in ["does not contain a recipe", "cannot extract", "doesn't include ingredients"]):
-            raise HTTPException(status_code=422, detail="Video appears to contain no recognizable recipe content.")
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
 
-    validate_recipe_fields(data)
     parsed_minutes = safe_parse_minutes(data.get("cook_time_minutes"))
-    final_minutes = parsed_minutes if parsed_minutes is not None else estimate_cook_time(data["title"], data["steps"])
+    data["cook_time_minutes"] = parsed_minutes if parsed_minutes is not None else estimate_cook_time(data["title"], data["steps"])
+
+    validate_recipe_fields(data)
 
     return Recipe(
         id=str(uuid.uuid4()),
         title=data["title"],
         ingredients=fix_ingredients(data["ingredients"]),
         steps=data["steps"],
-        cook_time_minutes=final_minutes
+        cook_time_minutes=data["cook_time_minutes"]
     )
+
+def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "Guest"):
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        return
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "fields": {
+            "User ID": user_id,
+            "Name": name,
+            "Email": email,
+            "Authentication Provider": provider,
+            "Registration Date": str(datetime.utcnow().date()),
+            "Last Login": str(datetime.utcnow().date()),
+            "Number of Uploaded Recipes": 0
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    requests.post(url, headers=headers, json=data)
+
+def sync_recipe_to_airtable(recipe: Recipe):
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        return
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "fields": {
+            "Recipe ID": recipe.id,
+            "Title": recipe.title,
+            "Cook Time (Minutes)": recipe.cook_time_minutes,
+            "Ingredients": json.dumps([i.dict() for i in recipe.ingredients]),
+            "Steps": json.dumps(recipe.steps),
+            "Created At": str(datetime.utcnow().date())
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    requests.post(url, headers=headers, json=data)
 
 @app.post("/upload-video", response_model=Recipe)
 def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -207,6 +253,9 @@ def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
         )
         db.add(db_recipe)
         db.commit()
+
+        sync_recipe_to_airtable(recipe)
+
         return recipe
 
     except Exception as e:
