@@ -1,30 +1,54 @@
-# main.py — harden fallback prompt to force JSON from GPT-4 Vision
+# main.py — full code with DB integration, recipe parsing, and estimation logic
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Union
+from typing import List, Optional
 import uuid
 from openai import OpenAI
 import tempfile
 import subprocess
 import os
 import json
-import shutil
 import base64
 import re
+from sqlalchemy import create_engine, Column, Integer, String, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Update with specific frontend domain in production
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+class RecipeDB(Base):
+    __tablename__ = "recipes"
+    id = Column(String, primary_key=True, index=True)
+    title = Column(String, nullable=False)
+    ingredients = Column(Text, nullable=False)
+    steps = Column(Text, nullable=False)
+    cook_time_minutes = Column(Integer)
+
+Base.metadata.create_all(bind=engine)
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 class Ingredient(BaseModel):
     name: str
@@ -42,7 +66,6 @@ def clean_json_output(raw: str) -> str:
     return match.group(1).strip() if match else raw.strip()
 
 def estimate_cook_time(title: str, steps: List[str]) -> int:
-    # Fallback estimates by dish type keywords
     keywords = {
         "slow cooker": 240,
         "butter chicken": 60,
@@ -55,7 +78,6 @@ def estimate_cook_time(title: str, steps: List[str]) -> int:
     for key, val in keywords.items():
         if key in title.lower():
             return val
-    # fallback heuristic
     return max(10, len(steps) * 5)
 
 def fix_ingredients(ingredients: List[dict]) -> List[Ingredient]:
@@ -63,7 +85,6 @@ def fix_ingredients(ingredients: List[dict]) -> List[Ingredient]:
     for item in ingredients:
         name = item.get("name", "").strip()
         quantity = item.get("quantity", "").strip() if item.get("quantity") else ""
-        # Try to fix format: e.g., "for garnish cilantro" → name: cilantro, quantity: for garnish
         if not quantity and any(x in name.lower() for x in ["garnish", "as needed"]):
             quantity, name = name, "cilantro" if "cilantro" in quantity else name
         fixed.append(Ingredient(name=name, quantity=quantity or "to taste"))
@@ -151,7 +172,6 @@ Respond in this format only:
         raise HTTPException(status_code=500, detail=f"Invalid JSON from GPT-4 Vision: {raw_output}")
 
     validate_recipe_fields(data)
-
     parsed_minutes = safe_parse_minutes(data.get("cook_time_minutes"))
     final_minutes = parsed_minutes if parsed_minutes is not None else estimate_cook_time(data["title"], data["steps"])
 
@@ -164,9 +184,8 @@ Respond in this format only:
     )
 
 @app.post("/upload-video", response_model=Recipe)
-def upload_video(file: UploadFile = File(...)):
+def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
-        print(f"Received file: {file.filename}")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
             tmp.write(file.file.read())
             tmp_path = tmp.name
@@ -177,9 +196,33 @@ def upload_video(file: UploadFile = File(...)):
                 "-vf", "fps=1/2",
                 os.path.join(frame_dir, "frame_%03d.jpg")
             ], check=True)
-            return use_gpt4_vision_on_frames(frame_dir)
+            recipe = use_gpt4_vision_on_frames(frame_dir)
+
+        db_recipe = RecipeDB(
+            id=recipe.id,
+            title=recipe.title,
+            ingredients=json.dumps([i.dict() for i in recipe.ingredients]),
+            steps=json.dumps(recipe.steps),
+            cook_time_minutes=recipe.cook_time_minutes
+        )
+        db.add(db_recipe)
+        db.commit()
+        return recipe
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/recipes", response_model=List[Recipe])
+def list_recipes(db: Session = Depends(get_db)):
+    rows = db.query(RecipeDB).all()
+    return [
+        Recipe(
+            id=r.id,
+            title=r.title,
+            ingredients=json.loads(r.ingredients),
+            steps=json.loads(r.steps),
+            cook_time_minutes=r.cook_time_minutes
+        ) for r in rows
+    ]
