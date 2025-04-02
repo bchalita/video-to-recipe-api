@@ -35,11 +35,39 @@ class Recipe(BaseModel):
     title: str
     ingredients: List[Ingredient]
     steps: List[str]
-    cook_time_minutes: Optional[int]
+    cook_time_minutes: int
 
 def clean_json_output(raw: str) -> str:
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
     return match.group(1).strip() if match else raw.strip()
+
+def estimate_cook_time(title: str, steps: List[str]) -> int:
+    # Fallback estimates by dish type keywords
+    keywords = {
+        "slow cooker": 240,
+        "butter chicken": 60,
+        "lasagna": 90,
+        "omelette": 10,
+        "pasta": 25,
+        "salad": 15,
+        "soup": 40
+    }
+    for key, val in keywords.items():
+        if key in title.lower():
+            return val
+    # fallback heuristic
+    return max(10, len(steps) * 5)
+
+def fix_ingredients(ingredients: List[dict]) -> List[Ingredient]:
+    fixed = []
+    for item in ingredients:
+        name = item.get("name", "").strip()
+        quantity = item.get("quantity", "").strip() if item.get("quantity") else ""
+        # Try to fix format: e.g., "for garnish cilantro" → name: cilantro, quantity: for garnish
+        if not quantity and any(x in name.lower() for x in ["garnish", "as needed"]):
+            quantity, name = name, "cilantro" if "cilantro" in quantity else name
+        fixed.append(Ingredient(name=name, quantity=quantity or "to taste"))
+    return fixed
 
 def safe_parse_minutes(value) -> Optional[int]:
     try:
@@ -124,12 +152,15 @@ Respond in this format only:
 
     validate_recipe_fields(data)
 
+    parsed_minutes = safe_parse_minutes(data.get("cook_time_minutes"))
+    final_minutes = parsed_minutes if parsed_minutes is not None else estimate_cook_time(data["title"], data["steps"])
+
     return Recipe(
         id=str(uuid.uuid4()),
         title=data["title"],
-        ingredients=[Ingredient(**item) for item in data["ingredients"]],
+        ingredients=fix_ingredients(data["ingredients"]),
         steps=data["steps"],
-        cook_time_minutes=safe_parse_minutes(data.get("cook_time_minutes"))
+        cook_time_minutes=final_minutes
     )
 
 @app.post("/upload-video", response_model=Recipe)
