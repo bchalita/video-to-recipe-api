@@ -1,4 +1,4 @@
-# main.py — full app with login, signup, upload, Airtable sync, and per-user recipes
+# main.py — full app with secure signup/login, recipe upload, user linkage, Airtable sync, email confirmation
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,9 @@ from datetime import datetime
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session, relationship
+import bcrypt
+import smtplib
+from email.mime.text import MIMEText
 
 app = FastAPI()
 
@@ -79,16 +82,49 @@ class Recipe(BaseModel):
     user_id: Optional[str] = None
 
 # -----------------------------
+# Email sending function (SMTP must be configured)
+# -----------------------------
+
+def send_confirmation_email(to_email: str, name: str):
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = os.getenv("SMTP_PORT", "587")
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_pass = os.getenv("SMTP_PASS")
+
+    if not smtp_host or not smtp_user or not smtp_pass:
+        print("[EMAIL] SMTP credentials not configured.")
+        return
+
+    subject = "Welcome to VideoRecipe! 🍽️"
+    body = f"""
+    Hi {name},
+
+    Thanks for signing up! You can now upload videos and get recipes extracted automatically.
+
+    Bon appétit!
+    """
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = to_email
+
+    try:
+        with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, to_email, msg.as_string())
+        print(f"[EMAIL] Sent to {to_email}")
+    except Exception as e:
+        print(f"[EMAIL] Failed to send: {e}")
+
+# -----------------------------
 # Airtable Sync
 # -----------------------------
 
 def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "email"):
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
         return
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"}
     data = {
         "fields": {
             "User ID": user_id,
@@ -101,16 +137,12 @@ def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provide
         }
     }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    response = requests.post(url, headers=headers, json=data)
-    print("Airtable user sync status:", response.status_code, response.text)
+    requests.post(url, headers=headers, json=data)
 
 def sync_recipe_to_airtable(recipe: Recipe):
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
         return
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"}
     data = {
         "fields": {
             "Recipe ID": recipe.id,
@@ -130,21 +162,25 @@ def sync_recipe_to_airtable(recipe: Recipe):
 # -----------------------------
 
 @app.post("/signup")
-def signup(name: str = Form(...), email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
+def signup(name: str = Form(...), email: str = Form(...), password: str = Form(...), confirm_password: str = Form(...), db: Session = Depends(get_db)):
+    if password != confirm_password:
+        raise HTTPException(status_code=400, detail="Passwords do not match")
     existing = db.query(UserDB).filter(UserDB.email == email).first()
     if existing:
         raise HTTPException(status_code=409, detail="Email already registered")
+    hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
     user_id = str(uuid.uuid4())
-    user = UserDB(id=user_id, name=name, email=email, password=password)
+    user = UserDB(id=user_id, name=name, email=email, password=hashed_pw)
     db.add(user)
     db.commit()
     sync_user_to_airtable(user_id=user.id, email=user.email, name=user.name)
+    send_confirmation_email(to_email=email, name=name)
     return {"success": True, "user_id": user.id}
 
 @app.post("/login")
 def login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(UserDB).filter(UserDB.email == email, UserDB.password == password).first()
-    if not user:
+    user = db.query(UserDB).filter(UserDB.email == email).first()
+    if not user or not bcrypt.checkpw(password.encode(), user.password.encode()):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return {"success": True, "user_id": user.id}
 
@@ -161,10 +197,6 @@ def get_user_recipes(user_id: str, db: Session = Depends(get_db)):
             user_id=r.user_id
         ) for r in rows
     ]
-
-# -----------------------------
-# Upload Endpoint
-# -----------------------------
 
 @app.post("/upload-video", response_model=Recipe)
 def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
