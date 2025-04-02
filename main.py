@@ -72,6 +72,49 @@ class SignupRequest(BaseModel):
     email: str
     password: str
 
+def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "Guest"):
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        print("Missing Airtable credentials")
+        return
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "fields": {
+            "User ID": user_id,
+            "Name": name,
+            "Email": email,
+            "Authentication Provider": provider,
+            "Registration Date": str(datetime.utcnow().date()),
+            "Last Login": str(datetime.utcnow().date()),
+            "Number of Uploaded Recipes": 0
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    response = requests.post(url, headers=headers, json=data)
+    print("Airtable user sync status:", response.status_code, response.text)
+
+def sync_recipe_to_airtable(recipe: Recipe):
+    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
+        return
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "fields": {
+            "Recipe ID": recipe.id,
+            "Title": recipe.title,
+            "Cook Time (Minutes)": recipe.cook_time_minutes,
+            "Ingredients": json.dumps([i.dict() for i in recipe.ingredients]),
+            "Steps": json.dumps(recipe.steps),
+            "Created At": str(datetime.utcnow().date())
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    requests.post(url, headers=headers, json=data)
+
 def clean_json_output(raw: str) -> str:
     match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
     return match.group(1).strip() if match else raw.strip()
@@ -192,47 +235,6 @@ Respond in this format only:
         steps=data["steps"],
         cook_time_minutes=data["cook_time_minutes"]
     )
-
-def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "Guest"):
-    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
-        return
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "fields": {
-            "User ID": user_id,
-            "Name": name,
-            "Email": email,
-            "Authentication Provider": provider,
-            "Registration Date": str(datetime.utcnow().date()),
-            "Last Login": str(datetime.utcnow().date()),
-            "Number of Uploaded Recipes": 0
-        }
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    requests.post(url, headers=headers, json=data)
-
-def sync_recipe_to_airtable(recipe: Recipe):
-    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
-        return
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "fields": {
-            "Recipe ID": recipe.id,
-            "Title": recipe.title,
-            "Cook Time (Minutes)": recipe.cook_time_minutes,
-            "Ingredients": json.dumps([i.dict() for i in recipe.ingredients]),
-            "Steps": json.dumps(recipe.steps),
-            "Created At": str(datetime.utcnow().date())
-        }
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-    requests.post(url, headers=headers, json=data)
 
 @app.post("/upload-video", response_model=Recipe)
 def upload_video(file: UploadFile = File(...), db: Session = Depends(get_db)):
