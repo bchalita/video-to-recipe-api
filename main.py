@@ -1,26 +1,23 @@
-# main.py — full app with secure signup/login, recipe upload, user linkage, Airtable sync, email confirmation
+# main.py — full app with secure signup/login, recipe upload, recipe retrieval, Airtable sync
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Form
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import List, Optional
-import uuid
-from openai import OpenAI
-import tempfile
-import subprocess
 import os
+import re
 import json
 import base64
-import re
+import uuid
+import tempfile
+import subprocess
+from datetime import date
+from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends, Body
+from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from starlette.responses import JSONResponse
+from models import Recipe, Ingredient, RecipeDB, User, UserCreate, UserDB
+from db import get_db
+from openai import OpenAI
 import requests
-from datetime import datetime
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker, Session, relationship
-import bcrypt
-import smtplib
-from email.mime.text import MIMEText
 
+client = OpenAI()
 app = FastAPI()
 
 app.add_middleware(
@@ -31,150 +28,38 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
+AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_RECIPES_TABLE = "Recipes"
 AIRTABLE_USERS_TABLE = "Users"
 
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-class UserDB(Base):
-    __tablename__ = "users"
-    id = Column(String, primary_key=True, index=True)
-    name = Column(String, nullable=False)
-    email = Column(String, unique=True, nullable=False)
-    password = Column(String, nullable=False)
-    recipes = relationship("RecipeDB", back_populates="user")
-
-class RecipeDB(Base):
-    __tablename__ = "recipes"
-    id = Column(String, primary_key=True, index=True)
-    title = Column(String, nullable=False)
-    ingredients = Column(Text, nullable=False)
-    steps = Column(Text, nullable=False)
-    cook_time_minutes = Column(Integer)
-    user_id = Column(String, ForeignKey("users.id"))
-    user = relationship("UserDB", back_populates="recipes")
-
-Base.metadata.create_all(bind=engine)
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-class Ingredient(BaseModel):
-    name: str
-    quantity: Optional[str] = None
-
-class Recipe(BaseModel):
-    id: str
-    title: str
-    ingredients: List[Ingredient]
-    steps: List[str]
-    cook_time_minutes: int
-    user_id: Optional[str] = None
-
-def send_confirmation_email(to_email: str, name: str):
-    smtp_host = os.getenv("SMTP_HOST")
-    smtp_port = os.getenv("SMTP_PORT", "587")
-    smtp_user = os.getenv("SMTP_USER")
-    smtp_pass = os.getenv("SMTP_PASS")
-
-    if not smtp_host or not smtp_user or not smtp_pass:
-        print("[EMAIL] SMTP credentials not configured.")
-        return
-
-    subject = "Welcome to VideoRecipe! 🍽️"
-    body = f"""
-    Hi {name},
-
-    Thanks for signing up! You can now upload videos and get recipes extracted automatically.
-
-    Bon appétit!
-    """
-    msg = MIMEText(body)
-    msg["Subject"] = subject
-    msg["From"] = smtp_user
-    msg["To"] = to_email
-
-    try:
-        with smtplib.SMTP(smtp_host, int(smtp_port)) as server:
-            server.starttls()
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, to_email, msg.as_string())
-        print(f"[EMAIL] Sent to {to_email}")
-    except Exception as e:
-        print(f"[EMAIL] Failed to send: {e}")
-
-def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "email"):
-    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
-        return
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "fields": {
-            "User ID": user_id,
-            "Name": name,
-            "Email": email,
-            "Authentication Provider": provider,
-            "Registration Date": str(datetime.utcnow().date()),
-            "Last Login": str(datetime.utcnow().date()),
-            "Number of Uploaded Recipes": 0
-        }
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    requests.post(url, headers=headers, json=data)
-
-def sync_recipe_to_airtable(recipe: Recipe):
-    if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
-        return
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}", "Content-Type": "application/json"}
-    data = {
-        "fields": {
-            "Recipe ID": recipe.id,
-            "Title": recipe.title,
-            "Cook Time (Minutes)": recipe.cook_time_minutes,
-            "Ingredients": json.dumps([i.dict() for i in recipe.ingredients]),
-            "Steps": json.dumps(recipe.steps),
-            "User ID": recipe.user_id or "",
-            "Created At": str(datetime.utcnow().date())
-        }
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-    requests.post(url, headers=headers, json=data)
-
 @app.post("/signup")
-def signup(name: str = Form(...), email: str = Form(...), password: str = Form(...), confirm_password: str = Form(...), db: Session = Depends(get_db)):
-    if password != confirm_password:
-        raise HTTPException(status_code=400, detail="Passwords do not match")
-    existing = db.query(UserDB).filter(UserDB.email == email).first()
+def signup(user: UserCreate, db: Session = Depends(get_db)):
+    existing = db.query(UserDB).filter(UserDB.email == user.email).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Email already registered")
-    hashed_pw = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+        raise HTTPException(status_code=400, detail="Email already registered")
+
     user_id = str(uuid.uuid4())
-    user = UserDB(id=user_id, name=name, email=email, password=hashed_pw)
-    db.add(user)
+    db_user = UserDB(
+        id=user_id,
+        name=user.name,
+        email=user.email,
+        auth_provider="email",
+        registration_date=date.today(),
+        last_login=date.today(),
+        uploaded_count=0,
+        saved_count=0
+    )
+    db.add(db_user)
     db.commit()
-    sync_user_to_airtable(user_id=user.id, email=user.email, name=user.name)
-    send_confirmation_email(to_email=email, name=name)
-    return {"success": True, "user_id": user.id}
 
-@app.post("/login")
-def login(email: str = Form(...), password: str = Form(...), db: Session = Depends(get_db)):
-    user = db.query(UserDB).filter(UserDB.email == email).first()
-    if not user or not bcrypt.checkpw(password.encode(), user.password.encode()):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    return {"success": True, "user_id": user.id}
+    sync_user_to_airtable(db_user)
 
-@app.get("/user-recipes", response_model=List[Recipe])
+    return {"success": True, "user_id": user_id}
+
+@app.get("/user-recipes")
 def get_user_recipes(user_id: str, db: Session = Depends(get_db)):
-    rows = db.query(RecipeDB).filter(RecipeDB.user_id == user_id).all()
+    recipes = db.query(RecipeDB).filter(RecipeDB.user_id == user_id).all()
     return [
         Recipe(
             id=r.id,
@@ -183,12 +68,56 @@ def get_user_recipes(user_id: str, db: Session = Depends(get_db)):
             steps=json.loads(r.steps),
             cook_time_minutes=r.cook_time_minutes,
             user_id=r.user_id
-        ) for r in rows
+        ) for r in recipes
     ]
 
-# main.py — full app with secure signup/login, recipe upload, user linkage, Airtable sync, email confirmation
+def sync_user_to_airtable(user: UserDB):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "fields": {
+            "User ID": user.id,
+            "Name": user.name,
+            "Email": user.email,
+            "Registration Date": str(user.registration_date),
+            "Authentication Provider": user.auth_provider,
+            "Last Login": str(user.last_login),
+            "Number of Uploaded Recipes": user.uploaded_count,
+            "Total Saved Recipes": user.saved_count,
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    r = requests.post(url, headers=headers, json=payload)
+    print("Airtable user sync status:", r.status_code, r.text)
 
-# ... [UNCHANGED CODE ABOVE]
+def sync_recipe_to_airtable(recipe: Recipe):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    users_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    params = {"filterByFormula": f'{{User ID}} = "{recipe.user_id}"'}
+    user_response = requests.get(users_url, headers=headers, params=params)
+    user_data = user_response.json()
+    user_airtable_id = user_data["records"][0]["id"] if user_data.get("records") else None
+
+    recipe_payload = {
+        "fields": {
+            "Title": recipe.title,
+            "Cook Time (Minutes)": recipe.cook_time_minutes,
+            "Ingredients": json.dumps([i.dict() for i in recipe.ingredients]),
+            "Steps": json.dumps(recipe.steps),
+            "Recipe ID": recipe.id,
+            "User ID": [user_airtable_id] if user_airtable_id else None,
+        }
+    }
+
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    r = requests.post(url, headers=headers, json=recipe_payload)
+    print("Airtable recipe sync status:", r.status_code, r.text)
 
 @app.post("/upload-video", response_model=Recipe)
 def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
@@ -248,7 +177,10 @@ def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Ses
             if isinstance(item, str):
                 ingredients.append(Ingredient(name=item.strip()))
             elif isinstance(item, dict) and "name" in item:
-                ingredients.append(Ingredient(**item))
+                ingredients.append(Ingredient(
+                    name=item["name"],
+                    quantity=item.get("quantity")
+                ))
 
         recipe = Recipe(
             id=str(uuid.uuid4()),
