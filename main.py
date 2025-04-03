@@ -81,10 +81,6 @@ class Recipe(BaseModel):
     cook_time_minutes: int
     user_id: Optional[str] = None
 
-# -----------------------------
-# Email sending function (SMTP must be configured)
-# -----------------------------
-
 def send_confirmation_email(to_email: str, name: str):
     smtp_host = os.getenv("SMTP_HOST")
     smtp_port = os.getenv("SMTP_PORT", "587")
@@ -116,10 +112,6 @@ def send_confirmation_email(to_email: str, name: str):
         print(f"[EMAIL] Sent to {to_email}")
     except Exception as e:
         print(f"[EMAIL] Failed to send: {e}")
-
-# -----------------------------
-# Airtable Sync
-# -----------------------------
 
 def sync_user_to_airtable(user_id: str, email: str, name: str = "Guest", provider: str = "email"):
     if not AIRTABLE_API_KEY or not AIRTABLE_BASE_ID:
@@ -156,10 +148,6 @@ def sync_recipe_to_airtable(recipe: Recipe):
     }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     requests.post(url, headers=headers, json=data)
-
-# -----------------------------
-# Auth endpoints
-# -----------------------------
 
 @app.post("/signup")
 def signup(name: str = Form(...), email: str = Form(...), password: str = Form(...), confirm_password: str = Form(...), db: Session = Depends(get_db)):
@@ -231,10 +219,18 @@ def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Ses
         raw_json = match.group(1).strip() if match else raw.strip()
         parsed = json.loads(raw_json)
 
+        raw_ingredients = parsed["ingredients"]
+        ingredients = []
+        for item in raw_ingredients:
+            if isinstance(item, str):
+                ingredients.append(Ingredient(name=item.strip()))
+            elif isinstance(item, dict) and "name" in item:
+                ingredients.append(Ingredient(**item))
+
         recipe = Recipe(
             id=str(uuid.uuid4()),
             title=parsed["title"],
-            ingredients=[Ingredient(**i) for i in parsed["ingredients"]],
+            ingredients=ingredients,
             steps=parsed["steps"],
             cook_time_minutes=int(parsed.get("cook_time_minutes", 20)),
             user_id=user_id
