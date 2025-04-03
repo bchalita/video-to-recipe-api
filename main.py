@@ -215,9 +215,18 @@ def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Ses
             )
 
         raw = result.choices[0].message.content
+        if not raw:
+            raise ValueError("No response from GPT.")
+
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
-        raw_json = match.group(1).strip() if match else raw.strip()
-        parsed = json.loads(raw_json)
+        if not match:
+            raise ValueError(f"GPT did not return JSON. Response:\n{raw}")
+
+        try:
+            raw_json = match.group(1).strip()
+            parsed = json.loads(raw_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Could not parse JSON. Error: {e}\nRaw:\n{raw}")
 
         raw_ingredients = parsed["ingredients"]
         ingredients = []
