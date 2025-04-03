@@ -186,6 +186,10 @@ def get_user_recipes(user_id: str, db: Session = Depends(get_db)):
         ) for r in rows
     ]
 
+# main.py — full app with secure signup/login, recipe upload, user linkage, Airtable sync, email confirmation
+
+# ... [UNCHANGED CODE ABOVE]
+
 @app.post("/upload-video", response_model=Recipe)
 def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
@@ -201,13 +205,23 @@ def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Ses
             ], check=True)
             image_files = sorted([os.path.join(frame_dir, f) for f in os.listdir(frame_dir) if f.endswith(".jpg")])
 
+            if not image_files:
+                raise ValueError("No frames extracted from video.")
+
             prompt = [
-                {"role": "system", "content": "You're a recipe parser. Output JSON only. Format: {title, ingredients, steps, cook_time_minutes}"},
+                {"role": "system", "content": (
+                    "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
+                    "you will identify the dish, ingredients, steps, and estimate a cook time. "
+                    "Always output valid JSON with this format:\n"
+                    "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
+                    "Only return the JSON. Do not explain anything."
+                )},
                 {"role": "user", "content": [
-                    {"type": "text", "text": "Here are images from a cooking video. Generate the recipe."},
+                    {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
                     *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in image_files[:12]]
                 ]}
             ]
+
             result = client.chat.completions.create(
                 model="gpt-4o",
                 messages=prompt,
