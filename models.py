@@ -40,6 +40,16 @@ class Recipe(BaseModel):
     cook_time_minutes: int
     user_id: Optional[str]
 
+class User(BaseModel):
+    id: str
+    name: str
+    email: str
+    auth_provider: Optional[str]
+    registration_date: Optional[str]
+    last_login: Optional[str]
+    uploaded_count: Optional[int]
+    saved_count: Optional[int]
+
 class UserCreate(BaseModel):
     name: str
     email: str
