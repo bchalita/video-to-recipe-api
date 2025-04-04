@@ -211,5 +211,12 @@ def upload_video(user_id: str = Form(...), file: UploadFile = File(...), db: Ses
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+from db import Base, engine
+import models
+
+Base.metadata.create_all(bind=engine)
+print("✅ Tables ensured on startup")
+
+
 
 
