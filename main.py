@@ -10,6 +10,7 @@ from datetime import date, datetime
 from typing import List, Optional
 
 import torch
+import numpy as np
 from PIL import Image
 from torchvision import models, transforms
 
@@ -150,7 +151,6 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             raise HTTPException(status_code=500, detail="No frames extracted")
 
         guess_id = classify_image(frames[0])
-        guess_context = f"The dish resembles ImageNet class ID {guess_id}."
 
         prompt = [
             {"role": "system", "content": (
@@ -204,7 +204,6 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         db.commit()
 
         sync_recipe_to_airtable(recipe)
-
         shutil.rmtree(temp_dir)
         return recipe
 
