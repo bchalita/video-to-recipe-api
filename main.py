@@ -6,7 +6,6 @@ import shutil
 import smtplib
 import tempfile
 import subprocess
-import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -18,7 +17,8 @@ from pydantic import BaseModel
 from starlette.responses import JSONResponse
 from email.mime.text import MIMEText
 import requests
-import openai
+from openai import OpenAI
+import uuid
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
@@ -39,6 +39,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+client = OpenAI()
 
 class UserDB(Base):
     __tablename__ = "users"
@@ -141,7 +143,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             ]}
         ]
 
-        result = openai.ChatCompletion.create(
+        result = client.chat.completions.create(
             model="gpt-4o",
             messages=prompt,
             max_tokens=1000
