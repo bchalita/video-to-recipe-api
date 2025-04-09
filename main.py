@@ -9,6 +9,10 @@ import subprocess
 from datetime import date, datetime
 from typing import List, Optional
 
+import torch
+from PIL import Image
+from torchvision import models, transforms
+
 from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker, relationship, declarative_base
@@ -91,6 +95,22 @@ def get_db():
     finally:
         db.close()
 
+def classify_image(image_path):
+    model = models.mobilenet_v2(pretrained=True)
+    model.eval()
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+    ])
+    image = Image.open(image_path).convert("RGB")
+    input_tensor = transform(image).unsqueeze(0)
+    with torch.no_grad():
+        output = model(input_tensor)
+    probabilities = torch.nn.functional.softmax(output[0], dim=0)
+    class_id = probabilities.argmax().item()
+    return class_id
+
 @app.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
     existing = db.query(UserDB).filter(UserDB.email == user.email).first()
@@ -129,11 +149,14 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         if not frames:
             raise HTTPException(status_code=500, detail="No frames extracted")
 
+        guess_id = classify_image(frames[0])
+        guess_context = f"The dish resembles ImageNet class ID {guess_id}."
+
         prompt = [
             {"role": "system", "content": (
                 "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
-                "you will identify the dish, ingredients, steps, and estimate a cook time. "
-                "Always output valid JSON with this format:\n"
+                f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
+                "Identify the dish, ingredients, steps, and estimate a cook time. Always output valid JSON with this format:\n"
                 "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
                 "Only return the JSON. Do not explain anything."
             )},
