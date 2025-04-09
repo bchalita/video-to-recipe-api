@@ -6,6 +6,7 @@ import shutil
 import smtplib
 import tempfile
 import subprocess
+import uuid
 from datetime import date, datetime
 from typing import List, Optional
 
