@@ -97,6 +97,7 @@ def get_db():
         db.close()
 
 def classify_image(image_path):
+    print(f"[DEBUG] Classifying image: {image_path}")
     model = models.mobilenet_v2(pretrained=True)
     model.eval()
     transform = transforms.Compose([
@@ -110,12 +111,15 @@ def classify_image(image_path):
         output = model(input_tensor)
     probabilities = torch.nn.functional.softmax(output[0], dim=0)
     class_id = probabilities.argmax().item()
+    print(f"[DEBUG] Predicted class ID: {class_id}")
     return class_id
 
 @app.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
+    print(f"[DEBUG] Signup request for {user.email}")
     existing = db.query(UserDB).filter(UserDB.email == user.email).first()
     if existing:
+        print("[DEBUG] Email already registered")
         raise HTTPException(status_code=400, detail="Email already registered")
 
     new_user = UserDB(
@@ -128,12 +132,14 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     )
     db.add(new_user)
     db.commit()
+    print("[DEBUG] New user committed to database")
     sync_user_to_airtable(new_user)
     return {"success": True, "user_id": new_user.id}
 
 @app.post("/upload-video")
 def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
     try:
+        print("[DEBUG] Uploading video")
         temp_dir = tempfile.mkdtemp()
         video_path = os.path.join(temp_dir, file.filename)
         with open(video_path, "wb") as buffer:
@@ -147,6 +153,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         ], check=True)
 
         frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
+        print(f"[DEBUG] Extracted {len(frames)} frames")
         if not frames:
             raise HTTPException(status_code=500, detail="No frames extracted")
 
@@ -173,6 +180,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         )
 
         raw = result.choices[0].message.content.strip()
+        print(f"[DEBUG] Raw GPT response: {raw[:200]}...")
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
         parsed = json.loads(match.group(1).strip() if match else raw)
 
@@ -202,6 +210,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         )
         db.add(db_recipe)
         db.commit()
+        print("[DEBUG] Recipe saved to database")
 
         sync_recipe_to_airtable(recipe)
         shutil.rmtree(temp_dir)
