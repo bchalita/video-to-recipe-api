@@ -47,6 +47,9 @@ app.add_middleware(
 
 client = OpenAI()
 
+print("✅ Tables ensured on startup")
+print(f"✅ NumPy available: {np.__version__}")
+
 class UserDB(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, index=True)
@@ -98,7 +101,7 @@ def get_db():
 
 def classify_image(image_path):
     print(f"[DEBUG] Classifying image: {image_path}")
-    model = models.mobilenet_v2(pretrained=True)
+    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
     model.eval()
     transform = transforms.Compose([
         transforms.Resize(256),
@@ -251,8 +254,7 @@ def sync_user_to_airtable(user: UserDB):
             "Registration Date": str(user.registration_date),
             "Authentication Provider": user.auth_provider,
             "Last Login": str(user.last_login),
-            "Number of Uploaded Recipes": user.uploaded_count,
-            "Total Saved Recipes": user.saved_count,
+            "Number of Uploaded Recipes": user.uploaded_count
         }
     }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
@@ -284,5 +286,3 @@ def sync_recipe_to_airtable(recipe: Recipe):
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     r = requests.post(url, headers=headers, json=recipe_payload)
     print("Airtable recipe sync status:", r.status_code, r.text)
-
-print("✅ Tables ensured on startup")
