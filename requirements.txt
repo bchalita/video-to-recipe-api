@@ -9,5 +9,6 @@ psycopg2-binary
 requests
 bcrypt
 torch==2.0.1
+torchvision==0.16.0
 Pillow
 numpy
