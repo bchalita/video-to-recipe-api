@@ -151,7 +151,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
         subprocess.run([
-            "ffmpeg", "-i", video_path, "-vf", "fps=1", os.path.join(frames_dir, "frame_%04d.jpg")
+            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=224:-1", os.path.join(frames_dir, "frame_%04d.jpg")
         ], check=True)
 
         frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
@@ -161,7 +161,9 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         guess_id = classify_image_multiple(frames)
 
-        prompt_frames = frames[:len(frames)]  # Limit to 70 frames for cost/performance balance
+        max_frames = 70
+        interval = max(1, len(frames) // max_frames)
+        prompt_frames = frames[::interval][:max_frames]
 
         prompt = [
             {"role": "system", "content": (
