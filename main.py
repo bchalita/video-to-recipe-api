@@ -163,6 +163,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
+
         subprocess.run([
             "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1", os.path.join(frames_dir, "frame_%04d.jpg")
         ], check=True)
@@ -174,49 +175,44 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         guess_id = classify_image_multiple(frames)
 
-        total_b64_size = sum(os.path.getsize(f) for f in frames)
-        avg_tokens_per_byte = 1.33
-        approx_total_tokens = total_b64_size * avg_tokens_per_byte / 4
-        max_token_budget = 20000
-        allowed_frames = int(max_token_budget / (avg_tokens_per_byte * (total_b64_size / len(frames)) / 4))
-        max_frames = min(allowed_frames, 70)
+        def gpt_prompt(frames_subset):
+            return [
+                {"role": "system", "content": (
+                    "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
+                    f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
+                    "Identify the dish, ingredients, steps, and estimate a cook time. Always output valid JSON with this format:\n"
+                    "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
+                    "If you're uncertain about an ingredient, make your best guess based on color, texture, and typical combinations."
+                    "If spices are seen but not obvious, infer them from context. Only return the JSON."
+                )},
+                {"role": "user", "content": [
+                    {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
+                    *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
+                ]}
+            ]
 
-        indices = np.linspace(0, len(frames) - 1, num=max_frames, dtype=int)
-        prompt_frames = [frames[i] for i in indices]
+        # Cap at 70 frames to avoid GPT-4O token limits
+        frames = frames[:70]
+        mid = len(frames) // 2
 
-        prompt = [
-            {"role": "system", "content": (
-                "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
-                f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
-                "Identify the dish, ingredients, steps, and estimate a cook time. Always output valid JSON with this format:\n"
-                "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
-                "If you're uncertain about an ingredient, make your best guess based on color, texture, and typical combinations."
-                "If spices are seen but not obvious, infer them from context (e.g., red = paprika, yellow = turmeric)."
-                "Only return the JSON. Do not explain anything."
-            )},
-            {"role": "user", "content": [
-                {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in prompt_frames]
-            ]}
-        ]
-
-        result = client.chat.completions.create(
-            model="gpt-4o",
-            messages=prompt,
-            max_tokens=1000
+        first_pass = client.chat.completions.create(
+            model="gpt-4o", messages=gpt_prompt(frames[:mid]), max_tokens=1000
+        )
+        second_pass = client.chat.completions.create(
+            model="gpt-4o", messages=gpt_prompt(frames[mid:]), max_tokens=1000
         )
 
-        raw = result.choices[0].message.content.strip()
-        print(f"[DEBUG] Raw GPT response: {raw[:200]}...")
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
-        parsed = json.loads(match.group(1).strip() if match else raw)
+        combined_text = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
+        print(f"[DEBUG] Raw GPT response: {combined_text[:300]}...")
 
-        ingredients = []
-        for item in parsed["ingredients"]:
-            if isinstance(item, dict):
-                ingredients.append(Ingredient(name=item["name"], quantity=item.get("quantity")))
-            elif isinstance(item, str):
-                ingredients.append(Ingredient(name=item))
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined_text, re.DOTALL)
+        parsed = json.loads(match.group(1).strip() if match else combined_text)
+
+        ingredients = [
+            Ingredient(name=item["name"], quantity=item.get("quantity"))
+            if isinstance(item, dict) else Ingredient(name=item)
+            for item in parsed["ingredients"]
+        ]
 
         recipe = Recipe(
             id=str(uuid.uuid4()),
