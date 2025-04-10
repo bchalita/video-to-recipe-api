@@ -180,10 +180,10 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
                 {"role": "system", "content": (
                     "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
                     f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
-                    "Identify the dish, ingredients, steps, and estimate a cook time. Always output valid JSON with this format:\n"
+                    "Be extra attentive to plating and final ingredients in later frames. Identify all ingredients, especially rice or common bases if shown. "
+                    "Always output valid JSON in this format:\n"
                     "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
-                    "If you're uncertain about an ingredient, make your best guess based on color, texture, and typical combinations."
-                    "If spices are seen but not obvious, infer them from context. Only return the JSON."
+                    "If unsure about ingredients, infer based on color, texture, context. Only return the JSON."
                 )},
                 {"role": "user", "content": [
                     {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
@@ -191,8 +191,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
                 ]}
             ]
 
-        # Cap at 70 frames to avoid GPT-4O token limits
-        frames = frames[:70]
+        frames = frames[:80]
         mid = len(frames) // 2
 
         first_pass = client.chat.completions.create(
