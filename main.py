@@ -151,7 +151,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
         subprocess.run([
-            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=224:-1", os.path.join(frames_dir, "frame_%04d.jpg")
+            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1", os.path.join(frames_dir, "frame_%04d.jpg")
         ], check=True)
 
         frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
@@ -161,7 +161,6 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         guess_id = classify_image_multiple(frames)
 
-        # Estimate token-safe frame count
         total_b64_size = sum(os.path.getsize(f) for f in frames)
         avg_tokens_per_byte = 1.33
         approx_total_tokens = total_b64_size * avg_tokens_per_byte / 4
@@ -169,8 +168,8 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         allowed_frames = int(max_token_budget / (avg_tokens_per_byte * (total_b64_size / len(frames)) / 4))
         max_frames = min(allowed_frames, 70)
 
-        interval = max(1, len(frames) // max_frames)
-        prompt_frames = frames[::interval][:max_frames]
+        indices = np.linspace(0, len(frames) - 1, num=max_frames, dtype=int)
+        prompt_frames = [frames[i] for i in indices]
 
         prompt = [
             {"role": "system", "content": (
