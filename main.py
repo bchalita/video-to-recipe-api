@@ -163,9 +163,9 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
-
         subprocess.run([
-            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1", os.path.join(frames_dir, "frame_%04d.jpg")
+            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1",
+            os.path.join(frames_dir, "frame_%04d.jpg")
         ], check=True)
 
         frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
@@ -174,6 +174,9 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             raise HTTPException(status_code=500, detail="No frames extracted")
 
         guess_id = classify_image_multiple(frames)
+        frames = frames[:90]  # absolute max to stay under OpenAI TPM cap
+        indices = np.linspace(0, len(frames) - 1, num=min(90, len(frames)), dtype=int)
+        selected_frames = [frames[i] for i in indices]
 
         def gpt_prompt(frames_subset):
             return [
@@ -191,15 +194,9 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
                 ]}
             ]
 
-        frames = frames[:80]
-        mid = len(frames) // 2
-
-        first_pass = client.chat.completions.create(
-            model="gpt-4o", messages=gpt_prompt(frames[:mid]), max_tokens=1000
-        )
-        second_pass = client.chat.completions.create(
-            model="gpt-4o", messages=gpt_prompt(frames[mid:]), max_tokens=1000
-        )
+        mid = len(selected_frames) // 2
+        first_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[:mid]), max_tokens=1000)
+        second_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[mid:]), max_tokens=1000)
 
         combined_text = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
         print(f"[DEBUG] Raw GPT response: {combined_text[:300]}...")
