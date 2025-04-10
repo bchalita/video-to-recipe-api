@@ -161,7 +161,14 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
 
         guess_id = classify_image_multiple(frames)
 
-        max_frames = 70
+        # Estimate token-safe frame count
+        total_b64_size = sum(os.path.getsize(f) for f in frames)
+        avg_tokens_per_byte = 1.33
+        approx_total_tokens = total_b64_size * avg_tokens_per_byte / 4
+        max_token_budget = 20000
+        allowed_frames = int(max_token_budget / (avg_tokens_per_byte * (total_b64_size / len(frames)) / 4))
+        max_frames = min(allowed_frames, 70)
+
         interval = max(1, len(frames) // max_frames)
         prompt_frames = frames[::interval][:max_frames]
 
