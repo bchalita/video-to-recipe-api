@@ -159,8 +159,9 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         if not frames:
             raise HTTPException(status_code=500, detail="No frames extracted")
 
-        sampled_frames = frames[::max(1, len(frames)//5)]
-        guess_id = classify_image_multiple(sampled_frames)
+        guess_id = classify_image_multiple(frames)
+
+        prompt_frames = frames[:len(frames)]  # Limit to 70 frames for cost/performance balance
 
         prompt = [
             {"role": "system", "content": (
@@ -174,7 +175,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             )},
             {"role": "user", "content": [
                 {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames[:15]]
+                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in prompt_frames]
             ]}
         ]
 
