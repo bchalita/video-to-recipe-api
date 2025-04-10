@@ -174,7 +174,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             raise HTTPException(status_code=500, detail="No frames extracted")
 
         guess_id = classify_image_multiple(frames)
-        frames = frames[:90]  # absolute max to stay under OpenAI TPM cap
+        frames = frames[:90]
         indices = np.linspace(0, len(frames) - 1, num=min(90, len(frames)), dtype=int)
         selected_frames = [frames[i] for i in indices]
 
