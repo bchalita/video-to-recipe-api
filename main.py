@@ -47,9 +47,6 @@ app.add_middleware(
 
 client = OpenAI()
 
-print("✅ Tables ensured on startup")
-print(f"✅ NumPy available: {np.__version__}")
-
 class UserDB(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, index=True)
@@ -99,8 +96,8 @@ def get_db():
     finally:
         db.close()
 
-def classify_image(image_path):
-    print(f"[DEBUG] Classifying image: {image_path}")
+def classify_image_multiple(images):
+    print(f"[DEBUG] Classifying {len(images)} images")
     model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
     model.eval()
     transform = transforms.Compose([
@@ -108,13 +105,16 @@ def classify_image(image_path):
         transforms.CenterCrop(224),
         transforms.ToTensor(),
     ])
-    image = Image.open(image_path).convert("RGB")
-    input_tensor = transform(image).unsqueeze(0)
-    with torch.no_grad():
-        output = model(input_tensor)
-    probabilities = torch.nn.functional.softmax(output[0], dim=0)
+    probabilities = None
+    for image_path in images:
+        image = Image.open(image_path).convert("RGB")
+        input_tensor = transform(image).unsqueeze(0)
+        with torch.no_grad():
+            output = model(input_tensor)
+        prob = torch.nn.functional.softmax(output[0], dim=0)
+        probabilities = prob if probabilities is None else probabilities + prob
     class_id = probabilities.argmax().item()
-    print(f"[DEBUG] Predicted class ID: {class_id}")
+    print(f"[DEBUG] Voted class ID: {class_id}")
     return class_id
 
 @app.post("/signup")
@@ -151,8 +151,7 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
         subprocess.run([
-            "ffmpeg", "-i", video_path, "-vf", "fps=1/2",
-            os.path.join(frames_dir, "frame_%04d.jpg")
+            "ffmpeg", "-i", video_path, "-vf", "fps=1", os.path.join(frames_dir, "frame_%04d.jpg")
         ], check=True)
 
         frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
@@ -160,7 +159,8 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         if not frames:
             raise HTTPException(status_code=500, detail="No frames extracted")
 
-        guess_id = classify_image(frames[0])
+        sampled_frames = frames[::max(1, len(frames)//5)]
+        guess_id = classify_image_multiple(sampled_frames)
 
         prompt = [
             {"role": "system", "content": (
@@ -168,11 +168,13 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
                 f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
                 "Identify the dish, ingredients, steps, and estimate a cook time. Always output valid JSON with this format:\n"
                 "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
+                "If you're uncertain about an ingredient, make your best guess based on color, texture, and typical combinations."
+                "If spices are seen but not obvious, infer them from context (e.g., red = paprika, yellow = turmeric)."
                 "Only return the JSON. Do not explain anything."
             )},
             {"role": "user", "content": [
                 {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames[:12]]
+                *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames[:15]]
             ]}
         ]
 
@@ -286,3 +288,5 @@ def sync_recipe_to_airtable(recipe: Recipe):
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     r = requests.post(url, headers=headers, json=recipe_payload)
     print("Airtable recipe sync status:", r.status_code, r.text)
+
+print("✅ Tables ensured on startup")
