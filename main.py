@@ -89,6 +89,10 @@ class UserCreate(BaseModel):
     email: str
     password: str
 
+class UserLogin(BaseModel):
+    email: str
+    password: str
+
 def get_db():
     db = SessionLocal()
     try:
@@ -96,26 +100,14 @@ def get_db():
     finally:
         db.close()
 
-def classify_image_multiple(images):
-    print(f"[DEBUG] Classifying {len(images)} images")
-    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
-    model.eval()
-    transform = transforms.Compose([
-        transforms.Resize(256),
-        transforms.CenterCrop(224),
-        transforms.ToTensor(),
-    ])
-    probabilities = None
-    for image_path in images:
-        image = Image.open(image_path).convert("RGB")
-        input_tensor = transform(image).unsqueeze(0)
-        with torch.no_grad():
-            output = model(input_tensor)
-        prob = torch.nn.functional.softmax(output[0], dim=0)
-        probabilities = prob if probabilities is None else probabilities + prob
-    class_id = probabilities.argmax().item()
-    print(f"[DEBUG] Voted class ID: {class_id}")
-    return class_id
+@app.post("/login")
+def login(user: UserLogin, db: Session = Depends(get_db)):
+    found = db.query(UserDB).filter(UserDB.email == user.email).first()
+    if not found:
+        raise HTTPException(status_code=404, detail="User not found")
+    if found.password != user.password:
+        raise HTTPException(status_code=401, detail="Incorrect password")
+    return {"success": True, "user_id": found.id, "name": found.name}
 
 @app.post("/signup")
 def signup(user: UserCreate, db: Session = Depends(get_db)):
@@ -138,6 +130,27 @@ def signup(user: UserCreate, db: Session = Depends(get_db)):
     print("[DEBUG] New user committed to database")
     sync_user_to_airtable(new_user)
     return {"success": True, "user_id": new_user.id}
+
+def classify_image_multiple(images):
+    print(f"[DEBUG] Classifying {len(images)} images")
+    model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
+    model.eval()
+    transform = transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+    ])
+    probabilities = None
+    for image_path in images:
+        image = Image.open(image_path).convert("RGB")
+        input_tensor = transform(image).unsqueeze(0)
+        with torch.no_grad():
+            output = model(input_tensor)
+        prob = torch.nn.functional.softmax(output[0], dim=0)
+        probabilities = prob if probabilities is None else probabilities + prob
+    class_id = probabilities.argmax().item()
+    print(f"[DEBUG] Voted class ID: {class_id}")
+    return class_id
 
 @app.post("/upload-video")
 def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
