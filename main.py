@@ -188,23 +188,43 @@ class UserInteraction(BaseModel):
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
     headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
     }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_INTERACTIONS_TABLE}"
+
+    # Fetch Airtable record IDs for user and recipe
+    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    recipe_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+
+    user_resp = requests.get(user_url, headers=headers, params={"filterByFormula": f'{{User ID}} = "{interaction.user_id}"'})
+    recipe_resp = requests.get(recipe_url, headers=headers, params={"filterByFormula": f'{{Recipe ID}} = "{interaction.recipe_id}"'})
+
+    if user_resp.status_code != 200 or recipe_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to lookup user or recipe record")
+
+    user_records = user_resp.json().get("records", [])
+    recipe_records = recipe_resp.json().get("records", [])
+
+    if not user_records or not recipe_records:
+        raise HTTPException(status_code=404, detail="User or Recipe not found")
+
+    airtable_user_id = user_records[0]["id"]
+    airtable_recipe_id = recipe_records[0]["id"]
+
+    post_headers = headers.copy()
+    post_headers["Content-Type"] = "application/json"
 
     now = interaction.timestamp or datetime.utcnow().isoformat()
-
     payload = {
         "fields": {
-            "User ID": interaction.user_id,
-            "Recipe ID": interaction.recipe_id,
+            "User ID": [airtable_user_id],
+            "Recipe ID": [airtable_recipe_id],
             "Action": interaction.action,
             "Timestamp": now,
             "Unique Key": f"{interaction.user_id} - {interaction.recipe_id} - {interaction.action} - {now[:16]}"
         }
     }
-    r = requests.post(url, headers=headers, json=payload)
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_INTERACTIONS_TABLE}"
+    r = requests.post(url, headers=post_headers, json=payload)
 
     if r.status_code != 200:
         raise HTTPException(status_code=500, detail=f"Failed to sync interaction: {r.text}")
