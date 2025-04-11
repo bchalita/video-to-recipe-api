@@ -38,6 +38,7 @@ AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID")
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_RECIPES_TABLE = "Recipes"
 AIRTABLE_USERS_TABLE = "Users"
+AIRTABLE_INTERACTIONS_TABLE = "UserInteractions"
 
 app = FastAPI()
 
@@ -152,12 +153,23 @@ class UserSignup(BaseModel):
 @app.post("/signup")
 def signup(user: UserSignup):
     headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+    params = {
+        "filterByFormula": f"{{Email}} = '{user.email}'"
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    check = requests.get(url, headers=headers, params=params)
+
+    if check.status_code == 200 and check.json().get("records"):
+        existing_user = check.json()["records"][0]["fields"]
+        return {"success": True, "user_id": existing_user.get("User ID"), "message": "Email already registered"}
+
+    post_headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
     }
-
     hashed_password = hashlib.sha256(user.password.encode()).hexdigest()
-
     payload = {
         "fields": {
             "User ID": str(uuid.uuid4()),
@@ -166,16 +178,13 @@ def signup(user: UserSignup):
             "Password": hashed_password,
             "Authentication Provider": "email",
             "Registration Date": str(date.today()),
-            "Number of Uploaded Recipes": 0,
+            "Number of Uploaded Recipes": 0
         }
     }
-
-
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    response = requests.post(url, headers=headers, json=payload)
+    response = requests.post(url, headers=post_headers, json=payload)
 
     if response.status_code != 200:
-        raise HTTPException(status_code=500, detail=response.text)
+        raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
 
