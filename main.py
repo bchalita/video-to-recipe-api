@@ -172,6 +172,7 @@ def signup(user: UserSignup):
     response = requests.post(url, headers=headers, json=payload)
 
     if response.status_code != 200:
+        print("[Airtable ERROR]", response.status_code, response.text)  # add this line
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
