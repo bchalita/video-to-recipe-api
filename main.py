@@ -231,6 +231,34 @@ def save_interaction(interaction: UserInteraction):
 
     return {"success": True, "airtable_id": r.json().get("id")}
 
+
+@app.get("/interactions/{user_id}")
+def get_user_interactions(user_id: str):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+    params = {
+        "filterByFormula": f"{{User ID}} = '{user_id}'"
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_INTERACTIONS_TABLE}"
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch interactions")
+
+    records = response.json().get("records", [])
+    interactions = [
+        {
+            "recipe_id": record["fields"].get("Recipe ID", [None])[0],
+            "action": record["fields"].get("Action"),
+            "timestamp": record["fields"].get("Timestamp")
+        }
+        for record in records if "Recipe ID" in record["fields"]
+    ]
+
+    return {"user_id": user_id, "interactions": interactions}
+
+
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
     model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
