@@ -181,7 +181,6 @@ def signup(user: UserSignup):
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
-Let me know when this is added, and I’ll help you re-run the test prompt.
 
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
