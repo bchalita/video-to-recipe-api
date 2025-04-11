@@ -79,20 +79,6 @@ Base.metadata.create_all(bind=engine)
 
 ingredient_db_path = "ingredients.db"
 
-def get_known_ingredients_and_dishes():
-    conn = sqlite3.connect(ingredient_db_path)
-    c = conn.cursor()
-
-    c.execute("SELECT name FROM ingredients")
-    ingredients = [row[0] for row in c.fetchall()]
-
-    c.execute("SELECT name FROM dishes")
-    dishes = [row[0] for row in c.fetchall()]
-
-    conn.close()
-    return ingredients, dishes
-
-
 class Ingredient(BaseModel):
     name: str
     quantity: Optional[str] = None
@@ -289,8 +275,18 @@ def classify_image_multiple(images):
     print(f"[DEBUG] Voted class ID: {class_id}")
     return class_id
 
+def get_known_ingredients_and_dishes():
+    conn = sqlite3.connect(ingredient_db_path)
+    c = conn.cursor()
+    c.execute("SELECT name FROM ingredients")
+    ingredients = [row[0] for row in c.fetchall()]
+    c.execute("SELECT name FROM dishes")
+    dishes = [row[0] for row in c.fetchall()]
+    conn.close()
+    return ingredients, dishes
+
 @app.post("/upload-video")
-def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None), db: Session = Depends(get_db)):
+def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None)):
     try:
         print("[DEBUG] Uploading video")
         temp_dir = tempfile.mkdtemp()
@@ -315,26 +311,25 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         indices = np.linspace(0, len(frames) - 1, num=min(90, len(frames)), dtype=int)
         selected_frames = [frames[i] for i in indices]
 
+        known_ingredients, known_dishes = get_known_ingredients_and_dishes()
+
         def gpt_prompt(frames_subset):
-            known_ingredients, known_dishes = get_known_ingredients_and_dishes()
             return [
                 {"role": "system", "content": (
                     "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
                     f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
-                    "Use the list of known ingredients and known dishes only when you're uncertain about visual elements in the video. "
+                    "Use the list of known ingredients and dishes *only* if the visual context is unclear or ambiguous. "
                     f"Known ingredients include: {', '.join(known_ingredients[:30])}. "
                     f"Known dishes include: {', '.join(known_dishes[:15])}. "
                     "Always output valid JSON in this format:\n"
                     "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
-                    "Infer missing quantities or spices where needed. Only return the JSON."
+                    "Infer quantities and identify missing spices when needed. Only return the JSON."
                 )},
                 {"role": "user", "content": [
                     {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                    *[{"type": "image_url", "image_url": {
-                        "url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
+                    *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
                 ]}
             ]
-
 
         mid = len(selected_frames) // 2
         first_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[:mid]), max_tokens=1000)
@@ -346,36 +341,21 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined_text, re.DOTALL)
         parsed = json.loads(match.group(1).strip() if match else combined_text)
 
-        ingredients = [
-            Ingredient(name=item["name"], quantity=item.get("quantity"))
-            if isinstance(item, dict) else Ingredient(name=item)
-            for item in parsed["ingredients"]
-        ]
+        result = {
+            "title": parsed.get("title"),
+            "ingredients": parsed.get("ingredients"),
+            "steps": parsed.get("steps"),
+            "cook_time_minutes": parsed.get("cook_time_minutes"),
+            "debug": {
+                "frames_processed": len(frames),
+                "first_prompt_tokens": len(first_pass.usage.prompt_tokens),
+                "second_prompt_tokens": len(second_pass.usage.prompt_tokens),
+                "model_class_hint": guess_id
+            }
+        }
 
-        recipe = Recipe(
-            id=str(uuid.uuid4()),
-            title=parsed["title"],
-            ingredients=ingredients,
-            steps=parsed["steps"],
-            cook_time_minutes=int(parsed.get("cook_time_minutes", 20)),
-            user_id=user_id
-        )
-
-        db_recipe = RecipeDB(
-            id=recipe.id,
-            title=recipe.title,
-            ingredients=json.dumps([i.dict() for i in recipe.ingredients]),
-            steps=json.dumps(recipe.steps),
-            cook_time_minutes=recipe.cook_time_minutes,
-            user_id=user_id
-        )
-        db.add(db_recipe)
-        db.commit()
-        print("[DEBUG] Recipe saved to database")
-
-        sync_recipe_to_airtable(recipe)
         shutil.rmtree(temp_dir)
-        return recipe
+        return result
 
     except Exception as e:
         import traceback
