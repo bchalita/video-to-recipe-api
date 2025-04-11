@@ -10,7 +10,6 @@ from datetime import date, datetime
 from typing import List, Optional
 import sqlite3
 
-
 import torch
 import numpy as np
 from PIL import Image
@@ -113,6 +112,12 @@ class UserLogin(BaseModel):
     email: str
     password: str
 
+class UserInteraction(BaseModel):
+    user_id: str
+    recipe_id: str
+    action: str  # e.g. "saved", "viewed"
+    timestamp: Optional[str] = None
+
 def get_db():
     db = SessionLocal()
     try:
@@ -182,6 +187,32 @@ def signup(user: UserLogin):  # same fields: name, email, password
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": user_id, "name": user.email.split('@')[0]}
+
+@app.post("/interact")
+def save_interaction(interaction: UserInteraction):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_INTERACTIONS_TABLE}"
+
+    now = interaction.timestamp or datetime.utcnow().isoformat()
+
+    payload = {
+        "fields": {
+            "User ID": interaction.user_id,
+            "Recipe ID": interaction.recipe_id,
+            "Action": interaction.action,
+            "Timestamp": now,
+            "Unique Key": f"{interaction.user_id} - {interaction.recipe_id} - {interaction.action} - {now[:16]}"
+        }
+    }
+    r = requests.post(url, headers=headers, json=payload)
+
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail=f"Failed to sync interaction: {r.text}")
+
+    return {"success": True, "airtable_id": r.json().get("id")}
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
