@@ -166,11 +166,11 @@ def signup(user: UserSignup):
             "Password": hashed_password,
             "Authentication Provider": "email",
             "Registration Date": str(date.today()),
-            "Last Login": str(date.today()),
             "Number of Uploaded Recipes": 0,
             "Number of Saved Recipes": 0
         }
     }
+
 
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
     response = requests.post(url, headers=headers, json=payload)
