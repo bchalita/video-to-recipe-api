@@ -103,7 +103,7 @@ class Recipe(BaseModel):
     cook_time_minutes: int
     user_id: Optional[str] = None
 
-class UserCreate(BaseModel):
+class UserSignup(BaseModel):
     name: str
     email: str
     password: str
@@ -154,39 +154,34 @@ def login(user: UserLogin):
     }
 
 @app.post("/signup")
-def signup(user: UserLogin):  # same fields: name, email, password
+def signup(user: UserSignup):
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
         "Content-Type": "application/json"
     }
 
-    # Check if user already exists
-    check_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    check_params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
-    existing = requests.get(check_url, headers=headers, params=check_params).json().get("records", [])
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    # Generate user ID and create record
-    user_id = str(uuid.uuid4())
     payload = {
         "fields": {
-            "User ID": user_id,
-            "Name": user.email.split('@')[0],  # basic name default
+            "User ID": str(uuid.uuid4()),
+            "Name": user.name,
             "Email": user.email,
             "Password": user.password,
-            "Registration Date": str(datetime.utcnow().date()),
             "Authentication Provider": "email",
-            "Last Login": str(datetime.utcnow().date()),
-            "Number of Uploaded Recipes": 0
+            "Registration Date": str(date.today()),
+            "Last Login": str(date.today()),
+            "Number of Uploaded Recipes": 0,
+            "Number of Saved Recipes": 0
         }
     }
 
-    response = requests.post(check_url, headers=headers, json=payload)
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    response = requests.post(url, headers=headers, json=payload)
+
     if response.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-    return {"success": True, "user_id": user_id, "name": user.email.split('@')[0]}
+    return {"success": True, "user_id": payload["fields"]["User ID"]}
+Let me know when this is added, and I’ll help you re-run the test prompt.
 
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
