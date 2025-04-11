@@ -133,7 +133,8 @@ def login(user: UserLogin):
         raise HTTPException(status_code=404, detail="User not found")
 
     airtable_user = records[0]["fields"]
-    if airtable_user.get("Password") != user.password:
+    hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
+    if airtable_user.get("Password") != hashed_input:
         raise HTTPException(status_code=401, detail="Incorrect password")
 
     return {
@@ -154,12 +155,14 @@ def signup(user: UserSignup):
         "Content-Type": "application/json"
     }
 
+    hashed_password = hashlib.sha256(user.password.encode()).hexdigest()
+
     payload = {
         "fields": {
             "User ID": str(uuid.uuid4()),
             "Name": user.name,
             "Email": user.email,
-            "Password": user.password,
+            "Password": hashed_password,
             "Authentication Provider": "email",
             "Registration Date": str(date.today()),
             "Last Login": str(date.today()),
@@ -172,7 +175,6 @@ def signup(user: UserSignup):
     response = requests.post(url, headers=headers, json=payload)
 
     if response.status_code != 200:
-        print("[Airtable ERROR]", response.status_code, response.text)  # add this line
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
