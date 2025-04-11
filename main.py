@@ -103,27 +103,16 @@ class Recipe(BaseModel):
     cook_time_minutes: int
     user_id: Optional[str] = None
 
-class UserSignup(BaseModel):
-    name: str
-    email: str
-    password: str
-
-class UserLogin(BaseModel):
-    email: str
-    password: str
-
-class UserInteraction(BaseModel):
-    user_id: str
-    recipe_id: str
-    action: str  # e.g. "saved", "viewed"
-    timestamp: Optional[str] = None
-
 def get_db():
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+class UserLogin(BaseModel):
+    email: str
+    password: str
 
 @app.post("/login")
 def login(user: UserLogin):
@@ -153,6 +142,11 @@ def login(user: UserLogin):
         "name": airtable_user.get("Name")
     }
 
+class UserSignup(BaseModel):
+    name: str
+    email: str
+    password: str
+
 @app.post("/signup")
 def signup(user: UserSignup):
     headers = {
@@ -181,6 +175,12 @@ def signup(user: UserSignup):
         raise HTTPException(status_code=500, detail="Failed to create user")
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
+
+class UserInteraction(BaseModel):
+    user_id: str
+    recipe_id: str
+    action: str  # e.g. "saved", "viewed"
+    timestamp: Optional[str] = None
 
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
