@@ -167,7 +167,6 @@ def signup(user: UserSignup):
             "Authentication Provider": "email",
             "Registration Date": str(date.today()),
             "Number of Uploaded Recipes": 0,
-            "Number of Saved Recipes": 0
         }
     }
 
