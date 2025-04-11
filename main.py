@@ -176,7 +176,7 @@ def signup(user: UserSignup):
     response = requests.post(url, headers=headers, json=payload)
 
     if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to create user")
+        raise HTTPException(status_code=500, detail=response.text)
 
     return {"success": True, "user_id": payload["fields"]["User ID"]}
 
