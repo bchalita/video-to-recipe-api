@@ -8,6 +8,8 @@ import tempfile
 import subprocess
 from datetime import date, datetime
 from typing import List, Optional
+import sqlite3
+
 
 import torch
 import numpy as np
@@ -26,7 +28,7 @@ from openai import OpenAI
 import uuid
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
-ingredient_db_path = "ingredients.db"
+
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -74,51 +76,21 @@ class RecipeDB(Base):
 
 Base.metadata.create_all(bind=engine)
 
-if not os.path.exists(ingredient_db_path):
-    print("[INIT] Creating and populating ingredients.db")
-    conn = sqlite3.connect(ingredient_db_path)
-    c = conn.cursor()
-    c.execute("""
-    CREATE TABLE ingredients (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        type TEXT,
-        common_uses TEXT,
-        example_dishes TEXT
-    )
-    """)
-    base_ingredients = [
-        ("chicken", "protein", "grilled, fried, baked", "chicken curry, grilled chicken"),
-        ("rice", "grain", "boiled, steamed", "fried rice, sushi, curry"),
-        ("garlic", "aromatic", "sautéing, seasoning", "garlic bread, stir fry"),
-        ("ginger", "aromatic", "grated, sliced", "stir fry, tea, curry"),
-        ("turmeric", "spice", "powdered, coloring", "curry, rice, marinades"),
-        ("paprika", "spice", "sprinkling, marinating", "deviled eggs, paella"),
-        ("salt", "seasoning", "universal", "everything"),
-        ("pepper", "seasoning", "universal", "everything"),
-        ("butter", "fat", "sautéing, baking", "cookies, sauces"),
-        ("olive oil", "fat", "drizzling, frying", "salads, pasta, roasts"),
-        ("cream", "dairy", "sauces, soups", "butter chicken, pasta"),
-        ("coriander", "herb", "garnish, flavoring", "soups, curries, salsas"),
-        ("mayo", "condiment", "sauces, spreads", "sandwiches, sushi, dressings"),
-        ("onion", "vegetable", "sautéed, raw", "soups, stir fries, tacos"),
-        ("tomato", "vegetable", "raw, sauce", "salads, pastas, curry"),
-        ("avocado", "fruit", "sliced, mashed", "salads, guacamole, sushi")
-    ]
-    c.executemany("INSERT INTO ingredients (name, type, common_uses, example_dishes) VALUES (?, ?, ?, ?)", base_ingredients)
-    conn.commit()
-    conn.close()
-    print("[INIT] ingredients.db created with base data")
-else:
-    print("[INIT] ingredients.db already exists")
+ingredient_db_path = "ingredients.db"
 
-def get_known_ingredients():
+def get_known_ingredients_and_dishes():
     conn = sqlite3.connect(ingredient_db_path)
     c = conn.cursor()
+
     c.execute("SELECT name FROM ingredients")
-    names = [row[0] for row in c.fetchall()]
+    ingredients = [row[0] for row in c.fetchall()]
+
+    c.execute("SELECT name FROM dishes")
+    dishes = [row[0] for row in c.fetchall()]
+
     conn.close()
-    return names
+    return ingredients, dishes
+
 
 class Ingredient(BaseModel):
     name: str
@@ -149,35 +121,67 @@ def get_db():
         db.close()
 
 @app.post("/login")
-def login(user: UserLogin, db: Session = Depends(get_db)):
-    found = db.query(UserDB).filter(UserDB.email == user.email).first()
-    if not found:
+def login(user: UserLogin):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+    params = {
+        "filterByFormula": f"{{Email}} = '{user.email}'"
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch user")
+
+    records = response.json().get("records", [])
+    if not records:
         raise HTTPException(status_code=404, detail="User not found")
-    if found.password != user.password:
+
+    airtable_user = records[0]["fields"]
+    if airtable_user.get("Password") != user.password:
         raise HTTPException(status_code=401, detail="Incorrect password")
-    return {"success": True, "user_id": found.id, "name": found.name}
+
+    return {
+        "success": True,
+        "user_id": airtable_user.get("User ID"),
+        "name": airtable_user.get("Name")
+    }
 
 @app.post("/signup")
-def signup(user: UserCreate, db: Session = Depends(get_db)):
-    print(f"[DEBUG] Signup request for {user.email}")
-    existing = db.query(UserDB).filter(UserDB.email == user.email).first()
+def signup(user: UserLogin):  # same fields: name, email, password
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+
+    # Check if user already exists
+    check_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    check_params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    existing = requests.get(check_url, headers=headers, params=check_params).json().get("records", [])
     if existing:
-        print("[DEBUG] Email already registered")
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    new_user = UserDB(
-        id=str(uuid.uuid4()),
-        name=user.name,
-        email=user.email,
-        password=user.password,
-        registration_date=str(datetime.utcnow().date()),
-        last_login=str(datetime.utcnow().date())
-    )
-    db.add(new_user)
-    db.commit()
-    print("[DEBUG] New user committed to database")
-    sync_user_to_airtable(new_user)
-    return {"success": True, "user_id": new_user.id}
+    # Generate user ID and create record
+    user_id = str(uuid.uuid4())
+    payload = {
+        "fields": {
+            "User ID": user_id,
+            "Name": user.email.split('@')[0],  # basic name default
+            "Email": user.email,
+            "Password": user.password,
+            "Registration Date": str(datetime.utcnow().date()),
+            "Authentication Provider": "email",
+            "Last Login": str(datetime.utcnow().date()),
+            "Number of Uploaded Recipes": 0
+        }
+    }
+
+    response = requests.post(check_url, headers=headers, json=payload)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+    return {"success": True, "user_id": user_id, "name": user.email.split('@')[0]}
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
@@ -227,20 +231,25 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         selected_frames = [frames[i] for i in indices]
 
         def gpt_prompt(frames_subset):
+            known_ingredients, known_dishes = get_known_ingredients_and_dishes()
             return [
                 {"role": "system", "content": (
                     "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
                     f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
-                    "Be extra attentive to plating and final ingredients in later frames. Identify all ingredients, especially rice or common bases if shown. "
+                    "Use the list of known ingredients and known dishes only when you're uncertain about visual elements in the video. "
+                    f"Known ingredients include: {', '.join(known_ingredients[:30])}. "
+                    f"Known dishes include: {', '.join(known_dishes[:15])}. "
                     "Always output valid JSON in this format:\n"
                     "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
-                    "If unsure about ingredients, infer based on color, texture, context. Only return the JSON."
+                    "Infer missing quantities or spices where needed. Only return the JSON."
                 )},
                 {"role": "user", "content": [
                     {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                    *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
+                    *[{"type": "image_url", "image_url": {
+                        "url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
                 ]}
             ]
+
 
         mid = len(selected_frames) // 2
         first_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[:mid]), max_tokens=1000)
