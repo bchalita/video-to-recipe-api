@@ -70,7 +70,13 @@ if not os.path.exists(ingredient_db_path):
         ("yogurt", "dairy", "marinade, sauces"),
         ("spinach", "vegetable", "steamed, sautéed"),
         ("bread", "grain", "toast, sandwiches"),
-        ("mushroom", "vegetable", "sautéed, baked")
+        ("mushroom", "vegetable", "sautéed, baked"),
+        ("parsley", "herb", "garnish, flavoring"),
+        ("mustard", "condiment", "dressing, sauces"),
+        ("lemon", "fruit", "zest, juice"),
+        ("anchovy", "fish", "sauces, umami enhancer"),
+        ("capers", "condiment", "salty, garnish"),
+        ("sour cream", "dairy", "topping, sauces")
     ]
     c.executemany("INSERT INTO ingredients (name, type, common_uses) VALUES (?, ?, ?)", base_ingredients)
 
