@@ -26,6 +26,8 @@ from openai import OpenAI
 import uuid
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
+ingredient_db_path = "ingredients.db"
+
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
@@ -71,6 +73,52 @@ class RecipeDB(Base):
     user = relationship("UserDB", back_populates="recipes")
 
 Base.metadata.create_all(bind=engine)
+
+if not os.path.exists(ingredient_db_path):
+    print("[INIT] Creating and populating ingredients.db")
+    conn = sqlite3.connect(ingredient_db_path)
+    c = conn.cursor()
+    c.execute("""
+    CREATE TABLE ingredients (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT UNIQUE NOT NULL,
+        type TEXT,
+        common_uses TEXT,
+        example_dishes TEXT
+    )
+    """)
+    base_ingredients = [
+        ("chicken", "protein", "grilled, fried, baked", "chicken curry, grilled chicken"),
+        ("rice", "grain", "boiled, steamed", "fried rice, sushi, curry"),
+        ("garlic", "aromatic", "sautéing, seasoning", "garlic bread, stir fry"),
+        ("ginger", "aromatic", "grated, sliced", "stir fry, tea, curry"),
+        ("turmeric", "spice", "powdered, coloring", "curry, rice, marinades"),
+        ("paprika", "spice", "sprinkling, marinating", "deviled eggs, paella"),
+        ("salt", "seasoning", "universal", "everything"),
+        ("pepper", "seasoning", "universal", "everything"),
+        ("butter", "fat", "sautéing, baking", "cookies, sauces"),
+        ("olive oil", "fat", "drizzling, frying", "salads, pasta, roasts"),
+        ("cream", "dairy", "sauces, soups", "butter chicken, pasta"),
+        ("coriander", "herb", "garnish, flavoring", "soups, curries, salsas"),
+        ("mayo", "condiment", "sauces, spreads", "sandwiches, sushi, dressings"),
+        ("onion", "vegetable", "sautéed, raw", "soups, stir fries, tacos"),
+        ("tomato", "vegetable", "raw, sauce", "salads, pastas, curry"),
+        ("avocado", "fruit", "sliced, mashed", "salads, guacamole, sushi")
+    ]
+    c.executemany("INSERT INTO ingredients (name, type, common_uses, example_dishes) VALUES (?, ?, ?, ?)", base_ingredients)
+    conn.commit()
+    conn.close()
+    print("[INIT] ingredients.db created with base data")
+else:
+    print("[INIT] ingredients.db already exists")
+
+def get_known_ingredients():
+    conn = sqlite3.connect(ingredient_db_path)
+    c = conn.cursor()
+    c.execute("SELECT name FROM ingredients")
+    names = [row[0] for row in c.fetchall()]
+    conn.close()
+    return names
 
 class Ingredient(BaseModel):
     name: str
