@@ -335,12 +335,12 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         first_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[:mid]), max_tokens=1000)
         second_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[mid:]), max_tokens=1000)
 
-        # Debug: output token usage (without len, since prompt_tokens, etc. are integers)
-       debug_usage = {
-            "first_prompt_tokens": first_pass.usage.prompt_tokens,
-            "second_prompt_tokens": second_pass.usage.prompt_tokens,
-            "first_total_tokens": first_pass.usage.total_tokens,
-            "second_total_tokens": second_pass.usage.total_tokens,
+        # Debug: output token usage (without len, since prompt_tokens, etc. are integers
+        debug_usage = {
+                "first_prompt_tokens": first_pass.usage.prompt_tokens,
+                "second_prompt_tokens": second_pass.usage.prompt_tokens,
+                "first_total_tokens": first_pass.usage.total_tokens,
+                "second_total_tokens": second_pass.usage.total_tokens,
         }
 
         print(f"[DEBUG] GPT token usage: {debug_usage}")
