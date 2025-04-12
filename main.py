@@ -336,12 +336,13 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
         second_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[mid:]), max_tokens=1000)
 
         # Debug: output token usage (without len, since prompt_tokens, etc. are integers)
-        debug_usage = {
+       debug_usage = {
             "first_prompt_tokens": first_pass.usage.prompt_tokens,
             "second_prompt_tokens": second_pass.usage.prompt_tokens,
             "first_total_tokens": first_pass.usage.total_tokens,
             "second_total_tokens": second_pass.usage.total_tokens,
         }
+
         print(f"[DEBUG] GPT token usage: {debug_usage}")
 
         combined_text = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
@@ -358,8 +359,8 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             "cook_time_minutes": parsed.get("cook_time_minutes"),
             "debug": {
                 "frames_processed": len(frames),
-                "first_prompt_tokens": len(first_pass.usage.prompt_tokens),
-                "second_prompt_tokens": len(second_pass.usage.prompt_tokens),
+                "first_prompt_tokens": first_pass.usage.prompt_tokens,
+                "second_prompt_tokens": second_pass.usage.prompt_tokens,
                 "model_class_hint": guess_id
             }
         }
