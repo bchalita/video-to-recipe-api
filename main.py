@@ -139,6 +139,38 @@ class UserSignup(BaseModel):
 
 @app.post("/signup")
 def signup(user: UserSignup):
+    """
+    Register a new user in Airtable. Prevents duplicate emails.
+    """
+    # 1. Check for existing user by email
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    resp = requests.get(url, headers=headers, params=params)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch user")
+    if resp.json().get("records"):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    # 2. Create the user
+    post_headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "fields": {
+            "Name": user.name,
+            "Email": user.email,
+            "Password": hashlib.sha256(user.password.encode()).hexdigest(),
+            "Registration Date": str(date.today())
+        }
+    }
+    r2 = requests.post(url, headers=post_headers, json=payload)
+    if r2.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+    return {"success": True, "user_id": r2.json()["fields"]["User ID"]}
+
 @app.post("/save-recipe")
 def save_recipe(payload: dict = Body(...)):
     """
