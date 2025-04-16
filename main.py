@@ -30,6 +30,10 @@ import requests
 from openai import OpenAI
 import uuid
 from schemas import UserLogin  # make sure you have UserLogin in schemas.py
+import logging
+
+logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
