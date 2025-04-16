@@ -144,9 +144,9 @@ def signup(user: UserSignup):
     """
     # 1. Check for existing user by email
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    resp = requests.get(url, headers=headers, params=params)
+    params  = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    url     = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    resp    = requests.get(url, headers=headers, params=params)
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
     if resp.json().get("records"):
@@ -155,13 +155,13 @@ def signup(user: UserSignup):
     # 2. Create the user
     post_headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type":  "application/json"
     }
     payload = {
         "fields": {
-            "Name": user.name,
-            "Email": user.email,
-            "Password": hashlib.sha256(user.password.encode()).hexdigest(),
+            "Name":              user.name,
+            "Email":             user.email,
+            "Password":          hashlib.sha256(user.password.encode()).hexdigest(),
             "Registration Date": str(date.today())
         }
     }
