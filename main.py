@@ -16,7 +16,7 @@ import numpy as np
 from PIL import Image
 from torchvision import models, transforms
 
-from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends
+from fastapi import FastAPI, Form, UploadFile, File, HTTPException, Depends, Body
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker, relationship, declarative_base
 from sqlalchemy import Column, String, Integer, Text, ForeignKey, create_engine
