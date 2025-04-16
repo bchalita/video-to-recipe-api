@@ -372,71 +372,88 @@ def get_known_ingredients_and_dishes():
     return ingredients, dishes
 
 @app.post("/upload-video")
-def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(None)):
+def upload_video(
+    file: UploadFile = File(None),
+    tiktok_url: str = Form(None),
+    user_id: Optional[str] = Form(None)
+):
+    """
+    Accept either:
+     • a TikTok URL (will fetch the description via yt-dlp), or
+     • a video file upload (will extract frames via FFmpeg).
+    Then run GPT on both frames and description.
+    """
+    description = ""
+    temp_dir    = None
+    frames      = []
+
     try:
-        print("[DEBUG] Uploading video")
-        temp_dir = tempfile.mkdtemp()
-        video_path = os.path.join(temp_dir, file.filename)
-        with open(video_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # 1. If TikTok URL provided, fetch its description
+        if tiktok_url:
+            ydl_opts = {"quiet": True, "skip_download": True}
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(tiktok_url, download=False)
+                description = info.get("description", "") or ""
 
-        frames_dir = os.path.join(temp_dir, "frames")
-        os.makedirs(frames_dir, exist_ok=True)
-        subprocess.run([
-            "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1",
-            os.path.join(frames_dir, "frame_%04d.jpg")
-        ], check=True)
+        # 2. If file provided, save and extract frames
+        if file:
+            print("[DEBUG] Uploading video")
+            temp_dir   = tempfile.mkdtemp()
+            video_path = os.path.join(temp_dir, file.filename)
+            with open(video_path, "wb") as buffer:
+                shutil.copyfileobj(file.file, buffer)
 
-        frames = sorted([os.path.join(frames_dir, f) for f in os.listdir(frames_dir) if f.endswith(".jpg")])
-        print(f"[DEBUG] Extracted {len(frames)} frames")
-        if not frames:
-            raise HTTPException(status_code=500, detail="No frames extracted")
+            frames_dir = os.path.join(temp_dir, "frames")
+            os.makedirs(frames_dir, exist_ok=True)
+            subprocess.run([
+                "ffmpeg", "-i", video_path, "-vf", "fps=1,scale=128:-1",
+                os.path.join(frames_dir, "frame_%04d.jpg")
+            ], check=True)
 
-        guess_id = classify_image_multiple(frames)
-        frames = frames[:90]
-        indices = np.linspace(0, len(frames) - 1, num=min(90, len(frames)), dtype=int)
-        selected_frames = [frames[i] for i in indices]
+            frames = sorted([
+                os.path.join(frames_dir, f)
+                for f in os.listdir(frames_dir) if f.endswith(".jpg")
+            ])
+            print(f"[DEBUG] Extracted {len(frames)} frames")
+            if not frames:
+                raise HTTPException(status_code=500, detail="No frames extracted")
 
-        known_ingredients, known_dishes = get_known_ingredients_and_dishes()
+        if not (tiktok_url or frames):
+            raise HTTPException(status_code=400, detail="Must provide a TikTok URL or video file")
 
-        def gpt_prompt(frames_subset):
-            return [
-                {"role": "system", "content": (
-                    "You are an expert recipe extractor. Based on a sequence of images showing a cooking video, "
-                    f"the dish may resemble ImageNet class ID {guess_id}. Use that as guidance. "
-                    "Use the list of known ingredients and dishes *only* if the visual context is unclear or ambiguous. "
-                    f"Known ingredients include: {', '.join(known_ingredients[:30])}. "
-                    f"Known dishes include: {', '.join(known_dishes[:15])}. "
-                    "Always output valid JSON in this format:\n"
-                    "{ \"title\": str, \"ingredients\": [{\"name\": str, \"quantity\": str}], \"steps\": [str], \"cook_time_minutes\": int }\n"
-                    "Infer quantities and identify missing spices when needed. Only return the JSON."
-                )},
-                {"role": "user", "content": [
-                    {"type": "text", "text": "These are video frames of a cooking process. Output only the JSON for the recipe:"},
-                    *[{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64.b64encode(open(f, 'rb').read()).decode()}"}} for f in frames_subset]
-                ]}
-            ]
+        # 3. Prepare GPT prompt, including description if available
+        def gpt_prompt(frames_subset: List[str]):
+            system_parts = []
+            if description:
+                system_parts.append(f"Here is the video description:\n{description}\n")
+            system_parts.append(
+                "You are an expert recipe extractor. Based on the images, output valid JSON "
+                "with {title, ingredients:[{name,quantity}], steps:[…], cook_time_minutes:int}."
+            )
+            system_msg = {"role": "system", "content": "\n\n".join(system_parts)}
 
-        mid = len(selected_frames) // 2
-        first_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[:mid]), max_tokens=1000)
-        second_pass = client.chat.completions.create(model="gpt-4o", messages=gpt_prompt(selected_frames[mid:]), max_tokens=1000)
+            user_parts = [{"type":"text","text":"Extract recipe JSON from these frames:"}]
+            for fpath in frames_subset:
+                b64 = base64.b64encode(open(fpath, "rb").read()).decode()
+                user_parts.append({"type":"image_url","image_url":{"__base64": b64}})
 
-        # Debug: output token usage (without len, since prompt_tokens, etc. are integers
-        debug_usage = {
-                "first_prompt_tokens": first_pass.usage.prompt_tokens,
-                "second_prompt_tokens": second_pass.usage.prompt_tokens,
-                "first_total_tokens": first_pass.usage.total_tokens,
-                "second_total_tokens": second_pass.usage.total_tokens,
-        }
+            return [system_msg, {"role":"user","content": user_parts}]
 
-        print(f"[DEBUG] GPT token usage: {debug_usage}")
+        # 4. Run GPT in two passes for longer videos
+        guess_id = classify_image_multiple(frames)  # your existing hint step
+        selected = frames[:90]  # cap at 90 frames
+        mid = len(selected) // 2
 
-        combined_text = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
-        print(f"[DEBUG] Raw GPT response: {combined_text[:300]}...")
+        first  = client.chat.completions.create(model="gpt-4o",
+                   messages=gpt_prompt(selected[:mid]), max_tokens=1000)
+        second = client.chat.completions.create(model="gpt-4o",
+                   messages=gpt_prompt(selected[mid:]), max_tokens=1000)
 
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined_text, re.DOTALL)
-        parsed = json.loads(match.group(1).strip() if match else combined_text)
+        raw = first.choices[0].message.content.strip() + "\n" + second.choices[0].message.content.strip()
+        print(f"[DEBUG] Raw GPT response: {raw[:300]}…")
 
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
+        parsed = json.loads(match.group(1).strip() if match else raw)
 
         result = {
             "title": parsed.get("title"),
@@ -445,19 +462,21 @@ def upload_video(file: UploadFile = File(...), user_id: Optional[str] = Form(Non
             "cook_time_minutes": parsed.get("cook_time_minutes"),
             "debug": {
                 "frames_processed": len(frames),
-                "first_prompt_tokens": first_pass.usage.prompt_tokens,
-                "second_prompt_tokens": second_pass.usage.prompt_tokens,
-                "model_class_hint": guess_id
+                "model_hint": guess_id
             }
         }
 
-        shutil.rmtree(temp_dir)
         return result
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+    finally:
+        # cleanup any temp dirs and frames
+        if temp_dir and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
 
 @app.get("/recipes")
 def get_recipes(user_id: Optional[str] = None, db: Session = Depends(get_db)):
