@@ -29,6 +29,8 @@ from email.mime.text import MIMEText
 import requests
 from openai import OpenAI
 import uuid
+from schemas import UserLogin  # make sure you have UserLogin in schemas.py
+
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
 
@@ -107,7 +109,11 @@ class UserLogin(BaseModel):
     password: str
 
 @app.post("/login")
-def login(user: UserLogin):
+def login(user: UserLogin = Body(...)):
+    """
+    Authenticate a user against Airtable.
+    """
+    # 1. Fetch user record by email
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}"
     }
@@ -115,24 +121,24 @@ def login(user: UserLogin):
         "filterByFormula": f"{{Email}} = '{user.email}'"
     }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code != 200:
+    resp = requests.get(url, headers=headers, params=params)
+    if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
-
-    records = response.json().get("records", [])
+    records = resp.json().get("records", [])
     if not records:
         raise HTTPException(status_code=404, detail="User not found")
 
-    airtable_user = records[0]["fields"]
+    # 2. Verify password
+    record = records[0]["fields"]
     hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
-    if airtable_user.get("Password") != hashed_input:
-        raise HTTPException(status_code=401, detail="Incorrect password")
+    if record.get("Password") != hashed_input:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
+    # 3. Return success with Airtable record ID
     return {
         "success": True,
-        "user_id": airtable_user.get("User ID"),
-        "name": airtable_user.get("Name")
+        "user_id": records[0]["id"],
+        "name": record.get("Name")
     }
 
 class UserSignup(BaseModel):
