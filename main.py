@@ -203,7 +203,7 @@ def save_recipe(payload: dict = Body(...)):
     }
     data = {
         "fields": {
-            "User ID":     user_id,
+            "User ID": [user_id],  # ← wrap in list
             "Recipe JSON": json.dumps(recipe)
         }
     }
