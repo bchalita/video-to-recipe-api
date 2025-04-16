@@ -166,10 +166,13 @@ def signup(user: UserSignup):
         }
     }
     r2 = requests.post(url, headers=post_headers, json=payload)
+
     if r2.status_code not in (200, 201):
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-    return {"success": True, "user_id": r2.json()["fields"]["User ID"]}
+    res = r2.json()
+    # Use Airtable record ID as the user ID
+    return {"success": True, "user_id": res.get("id")}
 
 @app.post("/save-recipe")
 def save_recipe(payload: dict = Body(...)):
