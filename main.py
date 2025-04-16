@@ -470,14 +470,31 @@ async def upload_video(
             return [system_msg, {"role":"user","content": user_list}]
 
         # 8. Run GPT in two passes
-        first_pass  = client.chat.completions.create(model="gpt-4o",
-                             messages=gpt_prompt(selected[:mid]), max_tokens=1000)
-        second_pass = client.chat.completions.create(model="gpt-4o",
-                             messages=gpt_prompt(selected[mid:]), max_tokens=1000)
+        first_pass = client.chat.completions.create(
+            model="gpt-4o",
+            messages=gpt_prompt(selected[:mid]),
+            max_tokens=1000
+        )
+        second_pass = client.chat.completions.create(
+            model="gpt-4o",
+            messages=gpt_prompt(selected[mid:]),
+            max_tokens=1000
+        )
+        
+        # Combine GPT outputs
+        combined = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
+        
+        # Log raw GPT response to help debug format issues
+        print(f"[DEBUG] Raw GPT response (first 500 chars):\n{combined[:500]}")
+        
+        # Try to extract JSON from a ```json code block
+        match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined, re.DOTALL)
+        
+        try:
+            parsed = json.loads(match.group(1).strip() if match else combined)
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to parse GPT output: {str(e)}")
 
-        combined = first_pass.choices[0].message.content.strip() + "\\n" + second_pass.choices[0].message.content.strip()
-        match    = re.search(r"```(?:json)?\\s*(.*?)\\s*```", combined, re.DOTALL)
-        parsed   = json.loads(match.group(1).strip() if match else combined)
 
         # 9. Construct and return result
         return {
