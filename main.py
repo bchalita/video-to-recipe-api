@@ -380,9 +380,6 @@ def get_known_ingredients_and_dishes():
     conn.close()
     return ingredients, dishes
 
-
-app = FastAPI()
-
 @app.post("/upload-video")
 async def upload_video(
     file: UploadFile = File(None),
