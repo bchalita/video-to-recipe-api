@@ -521,22 +521,45 @@ async def upload_video(
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
 
-@app.get("/recipes")
-def get_recipes(user_id: Optional[str] = None, db: Session = Depends(get_db)):
-    query = db.query(RecipeDB)
-    if user_id:
-        query = query.filter(RecipeDB.user_id == user_id)
-    recipes = query.all()
-    return [
-        {
-            "id": r.id,
-            "title": r.title,
-            "ingredients": json.loads(r.ingredients),
-            "steps": json.loads(r.steps),
-            "cook_time_minutes": r.cook_time_minutes,
-            "user_id": r.user_id
-        } for r in recipes
-    ]
+
+@app.get("/user-recipes")
+def get_user_recipes(user_id: str):
+    """
+    Return all saved recipes for a given user from Airtable.
+    """
+    import logging
+    logger = logging.getLogger("main")
+
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+
+    filter_formula = f"FIND('{user_id}', ARRAYJOIN({{User ID}}))"
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    params = {"filterByFormula": filter_formula}
+
+    resp = requests.get(url, headers=headers, params=params)
+    logger.info(f"[user-recipes] GET {url} → status {resp.status_code}")
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch recipes")
+
+    recipes = []
+    for record in resp.json().get("records", []):
+        recipe_json_str = record.get("fields", {}).get("Recipe JSON")
+        if recipe_json_str:
+            try:
+                recipe_data = json.loads(recipe_json_str)
+                recipes.append({
+                    "id": record["id"],
+                    "title": recipe_data.get("title"),
+                    "cook_time_minutes": recipe_data.get("cookTimeMinutes"),
+                    "full": recipe_data
+                })
+            except Exception as e:
+                logger.warning(f"[user-recipes] Could not parse recipe: {e}")
+    return recipes
+
 
 def sync_user_to_airtable(user: UserDB):
     headers = {
