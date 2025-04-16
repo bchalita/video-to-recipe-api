@@ -1,6 +1,5 @@
-from db import Base, engine
-import models
+from scrape_ingredients import init_ingredients_db, ingredient_db_path
 
 if __name__ == "__main__":
-    Base.metadata.create_all(bind=engine)
-    print("✅ Database tables created.")
+    init_ingredients_db(ingredient_db_path)
+    print("✅ ingredients.db initialized or already exists.")
