@@ -176,20 +176,39 @@ def signup(user: UserSignup):
 
 @app.post("/save-recipe")
 def save_recipe(payload: dict = Body(...)):
-    """
-    Save a recipe JSON for a user in Airtable.
-    """
+    # Log the incoming payload
+    logger.info(f"[save-recipe] payload: {payload}")
+
     user_id = payload.get("user_id")
-    recipe = payload.get("recipe")
+    recipe  = payload.get("recipe")
+    if not user_id or not recipe:
+        raise HTTPException(status_code=400, detail="Missing user_id or recipe")
+
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
+        "Content-Type":  "application/json"
     }
-    data = {"fields": {"User ID": user_id, "Recipe JSON": json.dumps(recipe)}}
+    data = {
+        "fields": {
+            "User ID":     user_id,
+            "Recipe JSON": json.dumps(recipe)
+        }
+    }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+
+    # Log the Airtable request
+    logger.info(f"[save-recipe] POST {url} → {data}")
     resp = requests.post(url, headers=headers, json=data)
+
     if resp.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Could not save recipe")
+        # Log Airtable’s error response
+        logger.error(f"[save-recipe] Airtable error {resp.status_code}: {resp.text}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Airtable save failed: {resp.status_code}"
+        )
+
+    logger.info(f"[save-recipe] success: {resp.json()}")
     return resp.json()
 
 @app.get("/saved-recipes/{user_id}")
