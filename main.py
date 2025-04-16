@@ -10,6 +10,8 @@ from datetime import date, datetime
 from typing import List, Optional
 import sqlite3
 import hashlib
+import yt_dlp
+
 
 import torch
 import numpy as np
