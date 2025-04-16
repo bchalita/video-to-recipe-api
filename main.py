@@ -11,6 +11,41 @@ from typing import List, Optional
 import sqlite3
 import hashlib
 
+
+@app.post("/save-recipe")
+def save_recipe(user_id: str = Form(...), recipe: dict = Form(...)):
+    """
+    Save a recipe JSON for a user in Airtable.
+    """
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "fields": {
+            "User ID": user_id,
+            "Recipe JSON": json.dumps(recipe)
+        }
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    r = requests.post(url, headers=headers, json=payload)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail="Could not save recipe")
+    return r.json()
+
+@app.get("/saved-recipes/{user_id}")
+def get_saved_recipes(user_id: str):
+    """
+    Retrieve saved recipes for a specified user.
+    """
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    r = requests.get(url, headers=headers, params=params)
+    if r.status_code != 200:
+        raise HTTPException(status_code=500, detail="Could not retrieve saved recipes")
+    return r.json().get("records", [])
+
 import torch
 import numpy as np
 from PIL import Image
@@ -148,8 +183,8 @@ def signup(user: UserSignup):
     check = requests.get(url, headers=headers, params=params)
 
     if check.status_code == 200 and check.json().get("records"):
-        existing_user = check.json()["records"][0]["fields"]
-        return {"success": True, "user_id": existing_user.get("User ID"), "message": "Email already registered"}
+        # Duplicate email detected
+        raise HTTPException(status_code=400, detail="Email already registered")
 
     post_headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
