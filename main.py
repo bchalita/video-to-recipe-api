@@ -219,7 +219,13 @@ def save_recipe(payload: dict):
     recipe_data = {
         "fields": {
             "User ID": [airtable_user_id],
-            "Recipe JSON": json.dumps(recipe)
+            "Recipe JSON": json.dumps(recipe),
+            "Title": recipe.get("title"),
+            "Cook Time (Minutes)": recipe.get("cookTimeMinutes"),
+            "Ingredients": "\n".join([
+                f"{i['quantity']} {i['name']}" for i in recipe.get("ingredients", [])
+            ]),
+            "Steps": "\n".join(recipe.get("steps", [])),
         }
     }
 
