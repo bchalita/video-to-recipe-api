@@ -13,6 +13,7 @@ import hashlib
 import yt_dlp
 
 
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import torch
 import numpy as np
 from PIL import Image
@@ -373,20 +374,6 @@ def get_known_ingredients_and_dishes():
     conn.close()
     return ingredients, dishes
 
-import os
-import re
-import json
-import base64
-import shutil
-import tempfile
-import subprocess
-from datetime import date, datetime
-from typing import List, Optional
-
-import yt_dlp
-import numpy as np
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
-from your_module import classify_image_multiple, get_known_ingredients_and_dishes, client  # adjust imports
 
 app = FastAPI()
 
