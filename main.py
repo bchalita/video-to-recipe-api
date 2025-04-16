@@ -11,41 +11,6 @@ from typing import List, Optional
 import sqlite3
 import hashlib
 
-
-@app.post("/save-recipe")
-def save_recipe(user_id: str = Form(...), recipe: dict = Form(...)):
-    """
-    Save a recipe JSON for a user in Airtable.
-    """
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "fields": {
-            "User ID": user_id,
-            "Recipe JSON": json.dumps(recipe)
-        }
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
-    r = requests.post(url, headers=headers, json=payload)
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail="Could not save recipe")
-    return r.json()
-
-@app.get("/saved-recipes/{user_id}")
-def get_saved_recipes(user_id: str):
-    """
-    Retrieve saved recipes for a specified user.
-    """
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
-    r = requests.get(url, headers=headers, params=params)
-    if r.status_code != 200:
-        raise HTTPException(status_code=500, detail="Could not retrieve saved recipes")
-    return r.json().get("records", [])
-
 import torch
 import numpy as np
 from PIL import Image
@@ -74,6 +39,7 @@ AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY")
 AIRTABLE_RECIPES_TABLE = "Recipes"
 AIRTABLE_USERS_TABLE = "Users"
 AIRTABLE_INTERACTIONS_TABLE = "UserInteractions"
+AIRTABLE_SAVED_RECIPES_TABLE = "SavedRecipes"
 
 app = FastAPI()
 
@@ -173,6 +139,37 @@ class UserSignup(BaseModel):
 
 @app.post("/signup")
 def signup(user: UserSignup):
+@app.post("/save-recipe")
+def save_recipe(payload: dict = Body(...)):
+    """
+    Save a recipe JSON for a user in Airtable.
+    """
+    user_id = payload.get("user_id")
+    recipe = payload.get("recipe")
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {"fields": {"User ID": user_id, "Recipe JSON": json.dumps(recipe)}}
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    resp = requests.post(url, headers=headers, json=data)
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Could not save recipe")
+    return resp.json()
+
+@app.get("/saved-recipes/{user_id}")
+def get_saved_recipes(user_id: str):
+    """Retrieve saved recipes for a specified user."""
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    resp = requests.get(url, headers=headers, params=params)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Could not retrieve saved recipes")
+    records = resp.json().get("records", [])
+    # return only fields or full records as needed
+    return records
+
     headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}"
     }
