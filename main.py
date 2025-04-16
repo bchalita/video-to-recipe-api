@@ -460,7 +460,13 @@ async def upload_video(
             user_list = [{"type":"text","text":"Extract recipe JSON from these frames:"}]
             for fpath in frames_subset:
                 b64 = base64.b64encode(open(fpath, "rb").read()).decode()
-                user_list.append({"type":"image_url","image_url":{"__base64": b64}})
+                user_list.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{b64}"
+                    }
+                })
+
             return [system_msg, {"role":"user","content": user_list}]
 
         # 8. Run GPT in two passes
