@@ -435,6 +435,14 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                         "image_url": img["src"] if img else None
                     })
                     break  # Only select the first valid match per store
+        
+        for store, items in store_carts.items():
+            logger.info(f"[rappi-cart] Final cart for {store}:")
+            for item in items:
+                logger.info(f"  - {item}")
+
+        if all(len(items) == 0 for items in store_carts.values()):
+            logger.warning("[rappi-cart] No items matched for any store. Ingredient translations or scraping may have failed.")
 
         return {"carts_by_store": store_carts}
 
