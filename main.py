@@ -374,27 +374,6 @@ def get_user_interactions(user_id: str):
     return {"user_id": user_id, "interactions": interactions}
 
 def clean_gpt_json_response(text):
-    match = re.search(r'\[.*\]', text, re.DOTALL)
-    if match:
-        return match.group(0)
-    raise ValueError("Could not extract JSON array from GPT response")
-
-
-import logging
-import requests
-import json
-import re
-from fastapi import HTTPException, Body
-from typing import Optional, List
-from bs4 import BeautifulSoup
-from openai import OpenAI
-
-from .config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SAVED_RECIPES_TABLE, OPENAI_API_KEY
-
-logger = logging.getLogger("main")
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-def clean_gpt_json_response(text):
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         return match.group(0)
