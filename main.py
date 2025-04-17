@@ -412,11 +412,10 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         for original, translated in zip(ingredients, translated_list):
             search_terms = [translated]
 
-            # Dynamically ask GPT for alternatives
             try:
                 fallback_prompt = [
                     {"role": "system", "content": "You are a food domain expert fluent in Brazilian Portuguese. Respond only with valid JSON."},
-                    {"role": "user", "content": f"Give me two alternative ways to describe '{translated}' as a cooking ingredient in Brazil. Only return a JSON array of two strings, nothing else."}
+                    {"role": "user", "content": f"Give me up to three alternative Brazilian supermarket terms for: '{translated}'. Only return a JSON array of strings."}
                 ]
                 fallback_response = client.chat.completions.create(
                     model="gpt-4o",
@@ -444,14 +443,16 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                         title = item.select_one("[data-testid='product-title']")
                         price = item.select_one("[data-testid='product-price']")
                         img = item.find("img")
-                        store_carts[store].append({
-                            "ingredient": original,
-                            "translated": term,
-                            "product_name": title.text.strip() if title else None,
-                            "price": price.text.strip() if price else None,
-                            "image_url": img["src"] if img else None
-                        })
-                        found_any = True
+
+                        if title and price:
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": term,
+                                "product_name": title.text.strip(),
+                                "price": price.text.strip(),
+                                "image_url": img["src"] if img else None
+                            })
+                            found_any = True
                 if found_any:
                     break
 
@@ -466,7 +467,6 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
-
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
