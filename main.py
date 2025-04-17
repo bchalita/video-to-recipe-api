@@ -417,6 +417,26 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         }
         store_carts = {store: [] for store in store_urls.keys()}
 
+        def parse_quantity(qty_text):
+            match = re.search(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade)", qty_text.lower())
+            if match:
+                num = float(match.group(1) + match.group(2))
+                unit = match.group(3)
+                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1}.get(unit, 1)
+                return num * factor
+            return None
+
+        def parse_required_quantity(qty_str):
+            if not qty_str:
+                return None
+            match = re.match(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade)?", qty_str.lower())
+            if match:
+                value = float(match.group(1) + match.group(2))
+                unit = match.group(3) or "un"
+                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1}.get(unit, 1)
+                return value * factor
+            return None
+
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
             search_terms = [translated]
 
@@ -438,7 +458,8 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
             found_any = False
-            quantity_needed = quantities[idx] if quantities else ""
+            quantity_needed_raw = quantities[idx] if quantities else ""
+            quantity_needed_val = parse_required_quantity(quantity_needed_raw)
 
             for term in search_terms:
                 for store, url in store_urls.items():
@@ -452,6 +473,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                         title_el = card.select_one("[data-qa='product-name']")
                         price_el = card.select_one("[data-testid='typography'][data-qa='product-price']")
                         image_el = card.select_one("img[data-testid='image']")
+                        qty_el = card.select_one("[data-qa='product-weight']")
 
                         title_text = title_el.text.strip().lower() if title_el else ""
                         translated_keywords = translated.lower().split()
@@ -468,13 +490,36 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                             if src and image_el and "srcset" in image_el.attrs:
                                 src = src.split(",")[0].strip().split(" ")[0]
 
+                            quantity_label = qty_el.text.strip() if qty_el else ""
+                            quantity_per_unit = parse_quantity(quantity_label) or 1
+
+                            price_str = price_el.text.strip().replace("R$", "").replace(",", ".").split("/")[0]
+                            try:
+                                unit_price = float(price_str)
+                            except:
+                                unit_price = 0.0
+
+                            if quantity_needed_val:
+                                units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999))
+                            else:
+                                units_needed = 1
+
+                            total_cost = units_needed * unit_price
+                            total_quantity = units_needed * quantity_per_unit
+
                             store_carts[store].append({
                                 "ingredient": original,
                                 "translated": term,
                                 "product_name": title_el.text.strip(),
-                                "price": price_el.text.strip(),
+                                "price": f"R$ {unit_price:.2f}",
                                 "image_url": src,
-                                "quantity_needed": quantity_needed
+                                "quantity_needed": quantity_needed_raw,
+                                "quantity_unit": quantity_label,
+                                "quantity_per_unit": quantity_per_unit,
+                                "units_to_buy": units_needed,
+                                "total_quantity_added": total_quantity,
+                                "total_cost": f"R$ {total_cost:.2f}",
+                                "excess_quantity": total_quantity - quantity_needed_val if quantity_needed_val else None
                             })
                             found_any = True
                             break
@@ -500,7 +545,6 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
-
 
 
 def classify_image_multiple(images):
