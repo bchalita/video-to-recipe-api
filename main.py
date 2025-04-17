@@ -382,12 +382,13 @@ def clean_gpt_json_response(text):
 
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
-    """
-    Translate all ingredients if needed and query Rappi store pages. Return product matches from Zona Sul and Pão de Açúcar.
-    """
     try:
         prompt = [
-            {"role": "system", "content": "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. Return the list of translations in the same order as a JSON array."},
+            {"role": "system", "content": (
+                "You are a food translation expert. Translate each ingredient into the common name as used in Brazilian supermarkets. "
+                "Use product terminology that aligns with shopping categories (e.g., 'pasta' should become 'macarrão', not 'massa'). "
+                "Return only a JSON array."
+            )},
             {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
         ]
 
@@ -442,7 +443,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                     for card in cards:
                         title_el = card.select_one("[data-qa='product-name']")
                         price_el = card.select_one("[data-testid='typography'][data-qa='product-price']")
-                        image_el = card.select_one("img")
+                        image_el = card.select_one("img[data-testid='image']")
 
                         if title_el and price_el:
                             store_carts[store].append({
@@ -450,7 +451,9 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                                 "translated": term,
                                 "product_name": title_el.text.strip(),
                                 "price": price_el.text.strip(),
-                                "image_url": image_el["src"] if image_el and image_el.has_attr("src") else None
+                                "image_url": (
+                                    image_el.get("src") or image_el.get("data-src") or image_el.get("data-lazy")
+                                ) if image_el else None
                             })
                             found_any = True
                             break
