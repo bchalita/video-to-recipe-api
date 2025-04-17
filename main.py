@@ -373,6 +373,13 @@ def get_user_interactions(user_id: str):
 
     return {"user_id": user_id, "interactions": interactions}
 
+def clean_gpt_json_response(text):
+    match = re.search(r'\[.*\]', text, re.DOTALL)
+    if match:
+        return match.group(0)
+    raise ValueError("Could not extract JSON array from GPT response")
+
+
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     """
@@ -397,7 +404,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         )
 
         translated_text = translation_response.choices[0].message.content.strip()
-        translated_list = json.loads(translated_text)
+        translated_list = json.loads(clean_gpt_json_response(translated_text))
 
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
