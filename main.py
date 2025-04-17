@@ -445,7 +445,10 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                         price_el = card.select_one("[data-testid='typography'][data-qa='product-price']")
                         image_el = card.select_one("img[data-testid='image']")
 
-                        if title_el and price_el:
+                        title_text = title_el.text.strip().lower() if title_el else ""
+                        translated_keywords = translated.lower().split()
+
+                        if title_el and price_el and any(word in title_text for word in translated_keywords):
                             store_carts[store].append({
                                 "ingredient": original,
                                 "translated": term,
