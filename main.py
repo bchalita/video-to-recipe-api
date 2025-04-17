@@ -373,56 +373,62 @@ def get_user_interactions(user_id: str):
 
     return {"user_id": user_id, "interactions": interactions}
 
-@app.post("/test-rappi-search")
-def test_rappi_product_search(ingredient: str = Body(..., embed=True)):
+@app.post("/rappi-cart")
+def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     """
-    Translate ingredient if needed and query Rappi with it. Return top product info.
+    Translate all ingredients if needed and query Rappi for each. Return product matches.
     """
     try:
-        # Translate to Portuguese if not already
-        translation_prompt = [
-            {"role": "system", "content": "You are a translation assistant. If the ingredient is not in Portuguese, translate it. If it is already in Portuguese, return it unchanged."},
-            {"role": "user", "content": f"Translate this to Portuguese: {ingredient}"}
+        # Prepare translation prompt for bulk translation
+        prompt = [
+            {"role": "system", "content": "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. Return the list of translations in the same order."},
+            {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
         ]
 
         translation_response = client.chat.completions.create(
             model="gpt-4o",
-            messages=translation_prompt,
-            max_tokens=20
+            messages=prompt,
+            max_tokens=300
         )
 
-        translated = translation_response.choices[0].message.content.strip()
-        logger.info(f"[rappi-search] Translated '{ingredient}' → '{translated}'")
+        translated_text = translation_response.choices[0].message.content.strip()
+        translated_list = json.loads(translated_text)
+
+        logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
         headers = {
             "User-Agent": "Mozilla/5.0"
         }
-        response = requests.get(
-            "https://www.rappi.com.br/search",
-            params={"query": translated},
-            headers=headers,
-            timeout=10
-        )
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        products = []
-
-        for item in soup.select("[data-testid='product-card']")[:3]:
-            title = item.select_one("[data-testid='product-title']")
-            price = item.select_one("[data-testid='product-price']")
-            img = item.find("img")
-            products.append({
-                "ingredient": ingredient,
+        results = []
+        for original, translated in zip(ingredients, translated_list):
+            response = requests.get(
+                "https://www.rappi.com.br/search",
+                params={"query": translated},
+                headers=headers,
+                timeout=10
+            )
+            soup = BeautifulSoup(response.text, "html.parser")
+            products = []
+            for item in soup.select("[data-testid='product-card']")[:3]:
+                title = item.select_one("[data-testid='product-title']")
+                price = item.select_one("[data-testid='product-price']")
+                img = item.find("img")
+                products.append({
+                    "product_name": title.text.strip() if title else None,
+                    "price": price.text.strip() if price else None,
+                    "image_url": img["src"] if img else None
+                })
+            results.append({
+                "ingredient": original,
                 "translated": translated,
-                "product_name": title.text.strip() if title else None,
-                "price": price.text.strip() if price else None,
-                "image_url": img["src"] if img else None
+                "products": products
             })
 
-        return {"results": products}
+        return {"cart": results}
 
     except Exception as e:
-        logger.error(f"[rappi-search] Error: {str(e)}")
+        logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def classify_image_multiple(images):
