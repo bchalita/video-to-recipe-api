@@ -392,8 +392,10 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         )
 
         translated_text = translation_response.choices[0].message.content.strip()
-        translated_list = json.loads(translated_text)
-
+        match = re.search(r"\[.*?\]", translated_text, re.DOTALL)
+        if not match:
+            raise ValueError("Could not extract list from translation response")
+        translated_list = json.loads(match.group(0))
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
         headers = {
