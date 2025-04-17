@@ -401,8 +401,8 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         try:
             translated_list = json.loads(clean_json)
         except Exception as parse_error:
-        logger.error(f"[rappi-cart] Failed to parse GPT response. Clean JSON candidate: {clean_json[:200]}")
-        raise HTTPException(status_code=500, detail=f"Could not parse GPT result: {str(parse_error)}")
+            logger.error(f"[rappi-cart] Failed to parse GPT response. Clean JSON candidate: {clean_json[:200]}")
+            raise HTTPException(status_code=500, detail=f"Could not parse GPT result: {str(parse_error)}")
         
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
