@@ -377,9 +377,9 @@ def get_user_interactions(user_id: str):
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     """
     Translate all ingredients if needed and query Rappi for each. Return product matches.
+    Only include results from Zona Sul and Pão de Açúcar. Return grouped cart options per store.
     """
     try:
-        # Prepare translation prompt for bulk translation
         prompt = [
             {"role": "system", "content": "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. Return the list of translations in the same order."},
             {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
@@ -392,25 +392,14 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         )
 
         translated_text = translation_response.choices[0].message.content.strip()
-        logger.debug(f"[rappi-cart] Raw GPT translation response: {translated_text[:200]}")
-        
-        # Extract JSON from markdown block if wrapped in ```json ... ```
-        match = re.search(r"```(?:json)?\s*(.*?)\s*```", translated_text, re.DOTALL)
-        clean_json = match.group(1).strip() if match else translated_text
-        
-        try:
-            translated_list = json.loads(clean_json)
-        except Exception as parse_error:
-            logger.error(f"[rappi-cart] Failed to parse GPT response. Clean JSON candidate: {clean_json[:200]}")
-            raise HTTPException(status_code=500, detail=f"Could not parse GPT result: {str(parse_error)}")
-        
+        translated_list = json.loads(translated_text)
+
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
-        headers = {
-            "User-Agent": "Mozilla/5.0"
-        }
+        headers = {"User-Agent": "Mozilla/5.0"}
+        stores = ["Zona Sul", "Pão de Açúcar"]
+        store_carts = {store: [] for store in stores}
 
-        results = []
         for original, translated in zip(ingredients, translated_list):
             response = requests.get(
                 "https://www.rappi.com.br/search",
@@ -419,23 +408,23 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                 timeout=10
             )
             soup = BeautifulSoup(response.text, "html.parser")
-            products = []
-            for item in soup.select("[data-testid='product-card']")[:3]:
-                title = item.select_one("[data-testid='product-title']")
-                price = item.select_one("[data-testid='product-price']")
-                img = item.find("img")
-                products.append({
-                    "product_name": title.text.strip() if title else None,
-                    "price": price.text.strip() if price else None,
-                    "image_url": img["src"] if img else None
-                })
-            results.append({
-                "ingredient": original,
-                "translated": translated,
-                "products": products
-            })
 
-        return {"cart": results}
+            for item in soup.select("[data-testid='product-card']"):
+                store_label = next((s.text for s in item.select("[data-testid='store-name']") if s.text in stores), None)
+                if store_label:
+                    title = item.select_one("[data-testid='product-title']")
+                    price = item.select_one("[data-testid='product-price']")
+                    img = item.find("img")
+                    store_carts[store_label].append({
+                        "ingredient": original,
+                        "translated": translated,
+                        "product_name": title.text.strip() if title else None,
+                        "price": price.text.strip() if price else None,
+                        "image_url": img["src"] if img else None
+                    })
+                    break  # Only select the first valid match per store
+
+        return {"carts_by_store": store_carts}
 
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
