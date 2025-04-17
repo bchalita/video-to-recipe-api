@@ -437,6 +437,17 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 return value * factor
             return None
 
+        def extract_next_data_json(soup):
+            script = soup.find("script", {"id": "__NEXT_DATA__", "type": "application/json"})
+            if not script:
+                logger.warning("[rappi-cart] Could not find __NEXT_DATA__ script tag")
+                return None
+            try:
+                return json.loads(script.string)
+            except Exception as e:
+                logger.warning(f"[rappi-cart] Failed to parse NEXT_DATA: {e}")
+                return None
+
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
             search_terms = [translated]
 
@@ -466,6 +477,19 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
                     cards = soup.select("a[href^='/p/']")
+                    json_data = extract_next_data_json(soup)
+                    product_info_by_id = {}
+
+                    if json_data:
+                        try:
+                            products = json_data.get("props", {}).get("pageProps", {}).get("initialData", {}).get("products", [])
+                            for product in products:
+                                pid = product.get("id")
+                                presentation = product.get("presentation", "")
+                                product_info_by_id[str(pid)] = presentation
+                                logger.info(f"[rappi-cart] Product ID {pid}: presentation = {presentation}")
+                        except Exception as e:
+                            logger.warning(f"[rappi-cart] Failed to parse product info from NEXT_DATA: {e}")
 
                     logger.info(f"[rappi-cart] Found {len(cards)} cards in raw HTML for term '{term}' at {response.url}")
 
@@ -473,8 +497,6 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                         title_el = card.select_one("[data-qa='product-name']")
                         price_el = card.select_one("[data-testid='typography'][data-qa='product-price']")
                         image_el = card.select_one("img[data-testid='image']")
-                        qty_el = card.select_one("[data-qa='product-weight']")
-
                         title_text = title_el.text.strip().lower() if title_el else ""
                         translated_keywords = translated.lower().split()
 
@@ -490,8 +512,10 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                             if src and image_el and "srcset" in image_el.attrs:
                                 src = src.split(",")[0].strip().split(" ")[0]
 
-                            quantity_label = qty_el.text.strip() if qty_el else ""
-                            quantity_per_unit = parse_quantity(quantity_label) or 1
+                            product_id_match = re.search(r"product-item-(\d+)", str(card))
+                            product_id = product_id_match.group(1) if product_id_match else ""
+                            presentation_label = product_info_by_id.get(product_id, "")
+                            quantity_per_unit = parse_quantity(presentation_label) or 1
 
                             price_str = price_el.text.strip().replace("R$", "").replace(",", ".").split("/")[0]
                             try:
@@ -507,6 +531,8 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                             total_cost = units_needed * unit_price
                             total_quantity = units_needed * quantity_per_unit
 
+                            logger.info(f"[rappi-cart] {original}: needed={quantity_needed_val}, unit={quantity_per_unit}, added={total_quantity}, units={units_needed}")
+
                             store_carts[store].append({
                                 "ingredient": original,
                                 "translated": term,
@@ -514,7 +540,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 "price": f"R$ {unit_price:.2f}",
                                 "image_url": src,
                                 "quantity_needed": quantity_needed_raw,
-                                "quantity_unit": quantity_label,
+                                "quantity_unit": presentation_label,
                                 "quantity_per_unit": quantity_per_unit,
                                 "units_to_buy": units_needed,
                                 "total_quantity_added": total_quantity,
