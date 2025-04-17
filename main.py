@@ -433,6 +433,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
 
             for term in search_terms:
                 for store, url in store_urls.items():
+                    item = None
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
                     cards = soup.select("div[data-testid*='product-card']") or soup.select("div[class*='ProductCard']")
