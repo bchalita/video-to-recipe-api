@@ -373,6 +373,57 @@ def get_user_interactions(user_id: str):
 
     return {"user_id": user_id, "interactions": interactions}
 
+@app.post("/test-rappi-search")
+def test_rappi_product_search(ingredient: str = Body(..., embed=True)):
+    """
+    Translate ingredient if needed and query Rappi with it. Return top product info.
+    """
+    try:
+        # Translate to Portuguese if not already
+        translation_prompt = [
+            {"role": "system", "content": "You are a translation assistant. If the ingredient is not in Portuguese, translate it. If it is already in Portuguese, return it unchanged."},
+            {"role": "user", "content": f"Translate this to Portuguese: {ingredient}"}
+        ]
+
+        translation_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=translation_prompt,
+            max_tokens=20
+        )
+
+        translated = translation_response.choices[0].message.content.strip()
+        logger.info(f"[rappi-search] Translated '{ingredient}' → '{translated}'")
+
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
+        response = requests.get(
+            "https://www.rappi.com.br/search",
+            params={"query": translated},
+            headers=headers,
+            timeout=10
+        )
+
+        soup = BeautifulSoup(response.text, "html.parser")
+        products = []
+
+        for item in soup.select("[data-testid='product-card']")[:3]:
+            title = item.select_one("[data-testid='product-title']")
+            price = item.select_one("[data-testid='product-price']")
+            img = item.find("img")
+            products.append({
+                "ingredient": ingredient,
+                "translated": translated,
+                "product_name": title.text.strip() if title else None,
+                "price": price.text.strip() if price else None,
+                "image_url": img["src"] if img else None
+            })
+
+        return {"results": products}
+
+    except Exception as e:
+        logger.error(f"[rappi-search] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
@@ -560,20 +611,23 @@ def get_user_recipes(user_id: str):
     params = {"filterByFormula": filter_formula}
 
     resp = requests.get(url, headers=headers, params=params)
-    logger.info(f"[user-recipes] GET {url} → status {resp.status_code}")
+    logger.info(f"[user-recipes] GET {resp.url} → status {resp.status_code}")
 
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch recipes")
 
+    raw_data = resp.json()
+    logger.debug(f"[user-recipes] Raw Airtable response: {raw_data}")
+
     recipes = []
-    for record in resp.json().get("records", []):
+    for record in raw_data.get("records", []):
         recipe_json_str = record.get("fields", {}).get("Recipe JSON")
         if recipe_json_str:
             try:
                 recipe_data = json.loads(recipe_json_str)
                 recipes.append({
                     "id": record["id"],
-                    "title": recipe_data.get("title"),
+                    "title": recipe_data.get("title") or record.get("fields", {}).get("Title"),
                     "cook_time_minutes": recipe_data.get("cookTimeMinutes"),
                     "full": recipe_data
                 })
