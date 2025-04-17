@@ -435,7 +435,25 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                 for store, url in store_urls.items():
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
-                    item = soup.select_one("[data-testid='product-card']")
+                    cards = soup.select("div[data-testid*='product-card']") or soup.select("div[class*='ProductCard']")
+                    logger.info(f"[rappi-cart] Found {len(cards)} cards in raw HTML for term '{term}' at {response.url}")
+                    
+                    for card in cards:
+                        title = card.select_one("[data-testid='product-title']") or card.select_one("p.MuiTypography-root")
+                        price = card.select_one("[data-testid='product-price']") or card.select_one("span[class*='PriceText']")
+                        img = card.find("img")
+                    
+                        if title and price:
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": term,
+                                "product_name": title.text.strip(),
+                                "price": price.text.strip(),
+                                "image_url": img["src"] if img else None
+                            })
+                            found_any = True
+                            break  # only grab the first valid item
+
 
                     logger.info(f"[rappi-cart] Searched '{term}' → Found {'1 item' if item else '0 items'} on {response.url}")
 
