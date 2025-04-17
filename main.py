@@ -413,13 +413,13 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         store_carts = {store: [] for store in stores}
 
         for original, translated in zip(ingredients, translated_list):
-            response = requests.get(
-                "https://www.rappi.com.br/search",
-                params={"query": translated},
-                headers=headers,
-                timeout=10
-            )
+            query_url = "https://www.rappi.com.br/search"
+            params = {"query": translated}
+            response = requests.get(query_url, params=params, headers=headers, timeout=10)
             soup = BeautifulSoup(response.text, "html.parser")
+            product_cards = soup.select("[data-testid='product-card']")
+            logger.info(f"[rappi-cart] Searched '{translated}' → Found {len(product_cards)} cards on {response.url}")
+
 
             for item in soup.select("[data-testid='product-card']"):
                 store_label = next((s.text for s in item.select("[data-testid='store-name']") if s.text in stores), None)
