@@ -381,8 +381,12 @@ def clean_gpt_json_response(text):
     raise ValueError("Could not extract JSON array from GPT response")
 
 @app.post("/rappi-cart")
-def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
+def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None)):
     try:
+        # Ingredient override for known recipe context (e.g. tartare)
+        if recipe_title and "tartare" in recipe_title.lower():
+            ingredients = ["tenderloin" if ing.lower() == "lean beef" else ing for ing in ingredients]
+
         prompt = [
             {"role": "system", "content": (
                 "You are a food translation expert. Translate each ingredient into the common name as used in Brazilian supermarkets. "
@@ -448,14 +452,16 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
                         title_text = title_el.text.strip().lower() if title_el else ""
                         translated_keywords = translated.lower().split()
 
-                        if title_el and price_el and any(word in title_text for word in translated_keywords):
+                        match_score = sum(word in title_text for word in translated_keywords) / len(translated_keywords)
+
+                        if title_el and price_el and match_score >= 0.5 and not any(tag in title_text for tag in ["sabonete", "azeitona"]):
                             store_carts[store].append({
                                 "ingredient": original,
                                 "translated": term,
                                 "product_name": title_el.text.strip(),
                                 "price": price_el.text.strip(),
                                 "image_url": (
-                                    image_el.get("src") or image_el.get("data-src") or image_el.get("data-lazy")
+                                    image_el.get("src") or image_el.get("data-src") or image_el.get("data-lazy") or image_el.get("srcset")
                                 ) if image_el else None
                             })
                             found_any = True
@@ -475,6 +481,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
