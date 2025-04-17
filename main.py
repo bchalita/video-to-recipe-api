@@ -373,6 +373,9 @@ def get_user_interactions(user_id: str):
 
     return {"user_id": user_id, "interactions": interactions}
 
+# Store cart in memory
+cached_cart_result = None
+
 def clean_gpt_json_response(text):
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
@@ -382,8 +385,8 @@ def clean_gpt_json_response(text):
 
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None)):
+    global cached_cart_result
     try:
-        # Ingredient override for known recipe context (e.g. tartare)
         if recipe_title and "tartare" in recipe_title.lower():
             ingredients = ["tenderloin" if ing.lower() == "lean beef" else ing for ing in ingredients]
 
@@ -476,11 +479,19 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         if not any(store_carts.values()):
             logger.warning("[rappi-cart] No items matched for any store. Ingredient translations or scraping may have failed.")
 
-        return {"carts_by_store": store_carts}
+        cached_cart_result = {"carts_by_store": store_carts}  # Cache result
+        return cached_cart_result
 
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/rappi-cart/view")
+def get_cached_cart():
+    if cached_cart_result:
+        return cached_cart_result
+    raise HTTPException(status_code=404, detail="No cart data available.")
+
 
 
 def classify_image_multiple(images):
