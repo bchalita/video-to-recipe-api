@@ -383,19 +383,13 @@ def clean_gpt_json_response(text):
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     """
-    Translate all ingredients if needed and query Rappi for each. Return product matches.
-    Only include results from Zona Sul and Pão de Açúcar. Return grouped cart options per store.
+    Translate all ingredients if needed and query Rappi store pages. Return product matches from Zona Sul and Pão de Açúcar.
     """
     try:
         prompt = [
-            {"role": "system", "content": (
-                "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. "
-                "Return only the list of translations in Portuguese, in the same order, formatted as valid JSON. "
-                "Example output: [\"queijo\", \"leite\", \"manteiga\"]"
-            )},
+            {"role": "system", "content": "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. Return the list of translations in the same order."},
             {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
         ]
-
 
         translation_response = client.chat.completions.create(
             model="gpt-4o",
@@ -409,39 +403,83 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
         headers = {"User-Agent": "Mozilla/5.0"}
-        stores = ["Zona Sul", "Pão de Açúcar"]
-        store_carts = {store: [] for store in stores}
+        store_urls = {
+            "Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
+            "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s"
+        }
+        store_carts = {store: [] for store in store_urls.keys()}
 
         for original, translated in zip(ingredients, translated_list):
-            query_url = "https://www.rappi.com.br/search"
-            params = {"query": translated}
-            response = requests.get(query_url, params=params, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, "html.parser")
-            product_cards = soup.select("[data-testid='product-card']")
-            logger.info(f"[rappi-cart] Searched '{translated}' → Found {len(product_cards)} cards on {response.url}")
+            candidate_terms = set()
+            candidate_terms.add(translated)
 
+            words = translated.split()
+            for i in range(len(words)):
+                candidate_terms.add(words[i])
+                if i + 1 < len(words):
+                    candidate_terms.add(" ".join(words[i:i+2]))
 
-            for item in soup.select("[data-testid='product-card']"):
-                store_label = next((s.text for s in item.select("[data-testid='store-name']") if s.text in stores), None)
-                if store_label:
-                    title = item.select_one("[data-testid='product-title']")
-                    price = item.select_one("[data-testid='product-price']")
-                    img = item.find("img")
-                    store_carts[store_label].append({
-                        "ingredient": original,
-                        "translated": translated,
-                        "product_name": title.text.strip() if title else None,
-                        "price": price.text.strip() if price else None,
-                        "image_url": img["src"] if img else None
-                    })
-                    break  # Only select the first valid match per store
-        
+            found_any = False
+
+            for term in candidate_terms:
+                for store, url in store_urls.items():
+                    response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    item = soup.select_one("[data-testid='product-card']")
+
+                    if item:
+                        title = item.select_one("[data-testid='product-title']")
+                        price = item.select_one("[data-testid='product-price']")
+                        img = item.find("img")
+                        store_carts[store].append({
+                            "ingredient": original,
+                            "translated": term,
+                            "product_name": title.text.strip() if title else None,
+                            "price": price.text.strip() if price else None,
+                            "image_url": img["src"] if img else None
+                        })
+                        found_any = True
+                if found_any:
+                    break
+
+            if not found_any:
+                fallback_prompt = [
+                    {"role": "system", "content": "You are a food domain expert fluent in Brazilian Portuguese."},
+                    {"role": "user", "content": f"Give me two alternative ways to describe '{translated}' as a cooking ingredient in Brazil. Only return a JSON list of two strings."}
+                ]
+                fallback_response = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=fallback_prompt,
+                    max_tokens=100
+                )
+                fallback_text = fallback_response.choices[0].message.content.strip()
+                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+
+                for alt in fallback_list:
+                    for store, url in store_urls.items():
+                        response = requests.get(url, params={"term": alt}, headers=headers, timeout=10)
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        item = soup.select_one("[data-testid='product-card']")
+
+                        if item:
+                            title = item.select_one("[data-testid='product-title']")
+                            price = item.select_one("[data-testid='product-price']")
+                            img = item.find("img")
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": alt,
+                                "product_name": title.text.strip() if title else None,
+                                "price": price.text.strip() if price else None,
+                                "image_url": img["src"] if img else None
+                            })
+                            found_any = True
+                    if found_any:
+                        break
+
         for store, items in store_carts.items():
-            logger.info(f"[rappi-cart] Final cart for {store}:")
-            for item in items:
-                logger.info(f"  - {item}")
+            logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
-        if all(len(items) == 0 for items in store_carts.values()):
+        if not any(store_carts.values()):
             logger.warning("[rappi-cart] No items matched for any store. Ingredient translations or scraping may have failed.")
 
         return {"carts_by_store": store_carts}
@@ -449,6 +487,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
