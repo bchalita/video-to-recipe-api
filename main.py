@@ -381,9 +381,14 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
     """
     try:
         prompt = [
-            {"role": "system", "content": "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. Return the list of translations in the same order."},
+            {"role": "system", "content": (
+                "You are a translation assistant. For each ingredient, if it's not in Portuguese, translate it. "
+                "Return only the list of translations in Portuguese, in the same order, formatted as valid JSON. "
+                "Example output: [\"queijo\", \"leite\", \"manteiga\"]"
+            )},
             {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
         ]
+
 
         translation_response = client.chat.completions.create(
             model="gpt-4o",
