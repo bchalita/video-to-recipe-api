@@ -31,6 +31,8 @@ from openai import OpenAI
 import uuid
 from schemas import UserLogin  # make sure you have UserLogin in schemas.py
 import logging
+from config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_SAVED_RECIPES_TABLE, OPENAI_API_KEY
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
