@@ -392,12 +392,18 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True)):
         )
 
         translated_text = translation_response.choices[0].message.content.strip()
+        logger.debug(f"[rappi-cart] Raw GPT translation response: {translated_text[:200]}")
         
-        # Extract JSON from code block if needed
+        # Extract JSON from markdown block if wrapped in ```json ... ```
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", translated_text, re.DOTALL)
         clean_json = match.group(1).strip() if match else translated_text
         
-        translated_list = json.loads(clean_json)
+        try:
+            translated_list = json.loads(clean_json)
+        except Exception as parse_error:
+        logger.error(f"[rappi-cart] Failed to parse GPT response. Clean JSON candidate: {clean_json[:200]}")
+        raise HTTPException(status_code=500, detail=f"Could not parse GPT result: {str(parse_error)}")
+        
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
         headers = {
