@@ -384,11 +384,11 @@ def clean_gpt_json_response(text):
     raise ValueError("Could not extract JSON array from GPT response")
 
 @app.post("/rappi-cart")
-def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None)):
+def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None), quantities: Optional[List[str]] = Body(None)):
     global cached_cart_result
     try:
         if recipe_title and "tartare" in recipe_title.lower():
-            ingredients = ["tenderloin" if ing.lower() == "lean beef" else ing for ing in ingredients]
+            ingredients = ["filet mignon" if ing.lower() == "lean beef" else ing for ing in ingredients]
 
         prompt = [
             {"role": "system", "content": (
@@ -417,7 +417,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         }
         store_carts = {store: [] for store in store_urls.keys()}
 
-        for original, translated in zip(ingredients, translated_list):
+        for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
             search_terms = [translated]
 
             try:
@@ -438,6 +438,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
             found_any = False
+            quantity_needed = quantities[idx] if quantities else ""
 
             for term in search_terms:
                 for store, url in store_urls.items():
@@ -458,14 +459,22 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                         match_score = sum(word in title_text for word in translated_keywords) / len(translated_keywords)
 
                         if title_el and price_el and match_score >= 0.5 and not any(tag in title_text for tag in ["sabonete", "azeitona"]):
+                            src = (
+                                image_el.get("src") or
+                                image_el.get("data-src") or
+                                image_el.get("data-lazy") or
+                                image_el.get("srcset")
+                            ) if image_el else None
+                            if src and image_el and "srcset" in image_el.attrs:
+                                src = src.split(",")[0].strip().split(" ")[0]
+
                             store_carts[store].append({
                                 "ingredient": original,
                                 "translated": term,
                                 "product_name": title_el.text.strip(),
                                 "price": price_el.text.strip(),
-                                "image_url": (
-                                    image_el.get("src") or image_el.get("data-src") or image_el.get("data-lazy") or image_el.get("srcset")
-                                ) if image_el else None
+                                "image_url": src,
+                                "quantity_needed": quantity_needed
                             })
                             found_any = True
                             break
