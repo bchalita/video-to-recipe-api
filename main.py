@@ -602,8 +602,9 @@ cached_last_payload = None
 
 @app.post("/rappi-cart/reset")
 def reset_rappi_cart():
-    global cached_cart_result
+    global cached_cart_result, cached_last_payload
     cached_cart_result = None
+    cached_last_payload = None
     return {"status": "cleared"}
 
 @app.post("/rappi-cart/resend")
@@ -614,9 +615,13 @@ def resend_rappi_cart():
 
 @app.get("/recent-recipes")
 def get_recent_recipes():
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"sort[0][field]": "Created", "sort[0][direction]": "desc", "pageSize": 5}
+    params = {
+        "sort[0][field]": "Created Time",
+        "sort[0][direction]": "desc",
+        "pageSize": 5
+    }
 
     response = requests.get(url, headers=headers, params=params)
     if response.status_code != 200:
@@ -636,6 +641,33 @@ def get_recent_recipes():
             })
         except Exception as e:
             logger.warning(f"[recent-recipes] Failed to parse recipe JSON: {e}")
+            continue
+    return output
+
+@app.get("/saved-recipes/{user_id}")
+def get_saved_recipes(user_id: str):
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch saved recipes")
+
+    records = response.json().get("records", [])
+    output = []
+    for r in records:
+        fields = r.get("fields", {})
+        try:
+            parsed_json = json.loads(fields.get("Recipe JSON", "{}"))
+            output.append({
+                "id": r["id"],
+                "title": parsed_json.get("title", fields.get("Title")),
+                "cook_time_minutes": parsed_json.get("cookTimeMinutes"),
+                "ingredients": parsed_json.get("ingredients")
+            })
+        except Exception as e:
+            logger.warning(f"[saved-recipes] Failed to parse recipe JSON: {e}")
             continue
     return output
 
