@@ -417,15 +417,6 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         }
         store_carts = {store: [] for store in store_urls.keys()}
 
-        def parse_quantity(qty_text):
-            match = re.search(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade)", qty_text.lower())
-            if match:
-                num = float(match.group(1) + match.group(2))
-                unit = match.group(3)
-                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1}.get(unit, 1)
-                return num * factor
-            return None
-
         def parse_required_quantity(qty_str):
             if not qty_str:
                 return None
@@ -448,9 +439,13 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 logger.warning(f"[rappi-cart] Failed to parse NEXT_DATA: {e}")
                 return None
 
+        def iterate_fallback_products(fallback):
+            for key, val in fallback.items():
+                if isinstance(val, dict) and "products" in val:
+                    yield from val["products"]
+
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
             search_terms = [translated]
-
             try:
                 fallback_prompt = [
                     {"role": "system", "content": "You are a food domain expert fluent in Brazilian Portuguese. Respond only with valid JSON."},
@@ -468,98 +463,53 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
             except Exception as e:
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
-            found_any = False
             quantity_needed_raw = quantities[idx] if quantities else ""
             quantity_needed_val = parse_required_quantity(quantity_needed_raw)
 
-            for term in search_terms:
-                for store, url in store_urls.items():
+            for store, url in store_urls.items():
+                for term in search_terms:
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
-                    cards = soup.select("a[href^='/p/']")
                     json_data = extract_next_data_json(soup)
-                    product_info_by_id = {}
 
                     if json_data:
                         try:
-                            products = json_data.get("props", {}).get("pageProps", {}).get("initialData", {}).get("products", [])
-                            for product in products:
-                                pid = product.get("id")
-                                presentation = product.get("presentation", "")
-                                product_info_by_id[str(pid)] = presentation
-                                logger.info(f"[rappi-cart] Product ID {pid}: presentation = {presentation}")
+                            fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
+                            for product in iterate_fallback_products(fallback):
+                                title = product.get("name", "").lower()
+                                price = float(str(product.get("price", "0")).replace(",", "."))
+                                unit_type = product.get("unitType", "")
+                                quantity_per_unit = product.get("quantity", 1)
+
+                                if not all(word in title for word in translated.lower().split()):
+                                    continue
+
+                                units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999)) if quantity_needed_val else 1
+                                total_cost = units_needed * price
+                                total_quantity = units_needed * quantity_per_unit
+
+                                store_carts[store].append({
+                                    "ingredient": original,
+                                    "translated": translated,
+                                    "product_name": product.get("name"),
+                                    "price": f"R$ {price:.2f}",
+                                    "image_url": product.get("image"),
+                                    "quantity_needed": quantity_needed_raw,
+                                    "quantity_unit": unit_type,
+                                    "quantity_per_unit": quantity_per_unit,
+                                    "units_to_buy": units_needed,
+                                    "total_quantity_added": total_quantity,
+                                    "total_cost": f"R$ {total_cost:.2f}",
+                                    "excess_quantity": total_quantity - quantity_needed_val if quantity_needed_val else None
+                                })
+                                break
                         except Exception as e:
-                            logger.warning(f"[rappi-cart] Failed to parse product info from NEXT_DATA: {e}")
-
-                    logger.info(f"[rappi-cart] Found {len(cards)} cards in raw HTML for term '{term}' at {response.url}")
-
-                    for card in cards:
-                        title_el = card.select_one("[data-qa='product-name']")
-                        price_el = card.select_one("[data-testid='typography'][data-qa='product-price']")
-                        image_el = card.select_one("img[data-testid='image']")
-                        title_text = title_el.text.strip().lower() if title_el else ""
-                        translated_keywords = translated.lower().split()
-
-                        match_score = sum(word in title_text for word in translated_keywords) / len(translated_keywords)
-
-                        if title_el and price_el and match_score >= 0.5 and not any(tag in title_text for tag in ["sabonete", "azeitona"]):
-                            src = (
-                                image_el.get("src") or
-                                image_el.get("data-src") or
-                                image_el.get("data-lazy") or
-                                image_el.get("srcset")
-                            ) if image_el else None
-                            if src and image_el and "srcset" in image_el.attrs:
-                                src = src.split(",")[0].strip().split(" ")[0]
-
-                            product_id_match = re.search(r"product-item-(\d+)", str(card))
-                            product_id = product_id_match.group(1) if product_id_match else ""
-                            presentation_label = product_info_by_id.get(product_id, "")
-                            quantity_per_unit = parse_quantity(presentation_label) or 1
-
-                            price_str = price_el.text.strip().replace("R$", "").replace(",", ".").split("/")[0]
-                            try:
-                                unit_price = float(price_str)
-                            except:
-                                unit_price = 0.0
-
-                            if quantity_needed_val:
-                                units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999))
-                            else:
-                                units_needed = 1
-
-                            total_cost = units_needed * unit_price
-                            total_quantity = units_needed * quantity_per_unit
-
-                            logger.info(f"[rappi-cart] {original}: needed={quantity_needed_val}, unit={quantity_per_unit}, added={total_quantity}, units={units_needed}")
-
-                            store_carts[store].append({
-                                "ingredient": original,
-                                "translated": term,
-                                "product_name": title_el.text.strip(),
-                                "price": f"R$ {unit_price:.2f}",
-                                "image_url": src,
-                                "quantity_needed": quantity_needed_raw,
-                                "quantity_unit": presentation_label,
-                                "quantity_per_unit": quantity_per_unit,
-                                "units_to_buy": units_needed,
-                                "total_quantity_added": total_quantity,
-                                "total_cost": f"R$ {total_cost:.2f}",
-                                "excess_quantity": total_quantity - quantity_needed_val if quantity_needed_val else None
-                            })
-                            found_any = True
-                            break
-
-                if found_any:
-                    break
+                            logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
 
         for store, items in store_carts.items():
             logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
-        if not any(store_carts.values()):
-            logger.warning("[rappi-cart] No items matched for any store. Ingredient translations or scraping may have failed.")
-
-        cached_cart_result = {"carts_by_store": store_carts}  # Cache result
+        cached_cart_result = {"carts_by_store": store_carts}
         return cached_cart_result
 
     except Exception as e:
@@ -571,7 +521,6 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
-
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
