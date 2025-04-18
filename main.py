@@ -448,17 +448,17 @@ def rappi_cart_search(
         store_carts = {store: [] for store in store_urls.keys()}
 
         try:
-        recipe_data = {
-            "fields": {
-                "Title": recipe_title,
-                "Ingredients": json.dumps([{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]),
-                "Created Time": datetime.utcnow().isoformat(),
-                "Recipe JSON": json.dumps({
-                    "title": recipe_title,
-                    "ingredients": [{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]
-                })
+            recipe_data = {
+                "fields": {
+                    "Title": recipe_title,
+                    "Ingredients": json.dumps([{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]),
+                    "Created Time": datetime.utcnow().isoformat(),
+                    "Recipe JSON": json.dumps({
+                        "title": recipe_title,
+                        "ingredients": [{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]
+                    })
+                }
             }
-        }
 
         if user_id:
             recipe_data["fields"]["User ID"] = [user_id]
