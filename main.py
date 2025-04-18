@@ -593,6 +593,48 @@ def get_cached_cart():
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
 
+cached_last_payload = None
+
+@app.post("/rappi-cart/reset")
+def reset_rappi_cart():
+    global cached_cart_result, cached_last_payload
+    cached_cart_result = None
+    return {"status": "cleared"}
+
+@app.post("/rappi-cart/resend")
+def resend_rappi_cart():
+    if not cached_last_payload:
+        raise HTTPException(status_code=400, detail="No previous payload available")
+    return rappi_cart_search(**cached_last_payload)
+
+@app.get("/recent-recipes")
+def get_recent_recipes():
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params = {"sort[0][field]": "Created", "sort[0][direction]": "desc", "pageSize": 5}
+
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch recent recipes")
+
+    records = response.json().get("records", [])
+    output = []
+    for r in records:
+        fields = r.get("fields", {})
+        try:
+            parsed_json = json.loads(fields.get("Recipe JSON", "{}"))
+            output.append({
+                "id": r["id"],
+                "title": parsed_json.get("title", fields.get("Title")),
+                "cook_time_minutes": parsed_json.get("cookTimeMinutes"),
+                "ingredients": parsed_json.get("ingredients")
+            })
+        except Exception as e:
+            logger.warning(f"[recent-recipes] Failed to parse recipe JSON: {e}")
+            continue
+    return output
+
+
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
     model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
