@@ -494,8 +494,19 @@ def rappi_cart_search(
             search_terms = [translated]
             try:
                 fallback_prompt = [
-                    {"role": "system", "content": "You are a food domain expert fluent in Brazilian Portuguese. Respond only with valid JSON."},
-                    {"role": "user", "content": f"Give me up to three alternative Brazilian supermarket terms for: '{translated}'. Only return a JSON array of strings."}
+                    {"role": "system", "content": (
+                        "You are a food domain expert fluent in Brazilian Portuguese. "
+                        "Avoid suggesting unrelated products (e.g., do not confuse nuts with mushrooms). "
+                        "Always prioritize food type relevance. "
+                        "If the ingredient is a specific variant (e.g., 'chestnut mushroom') that is not commonly found, suggest the broader type ('mushroom') or common synonyms. "
+                        "Respond only with valid JSON."
+                    )},
+                    {"role": "user", "content": (
+                        f"The ingredient '{translated}' was not found in a Brazilian supermarket. "
+                        "Suggest up to 5 realistic substitutions a shopper would search for instead, matching type and culinary function. "
+                        "Avoid brand names or niche regional terms. "
+                        "Return a JSON array like [\"term1\", \"term2\", ...]"
+                    )}
                 ]
                 fallback_response = client.chat.completions.create(
                     model="gpt-4o",
@@ -509,7 +520,6 @@ def rappi_cart_search(
             except Exception as e:
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
-            # Add base fallback as last resort (e.g., 'mushroom' if 'oyster mushroom' fails)
             if base_term.lower() not in [term.lower() for term in search_terms]:
                 search_terms.append(base_term)
 
