@@ -453,6 +453,15 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 if isinstance(val, dict) and "products" in val:
                     yield from val["products"]
 
+        def estimate_mass(ingredient_name, unit, value):
+            key = ingredient_name.lower()
+            table = {
+                "un": {"onion": 200, "garlic": 5},
+                "tbsp": {"butter": 14, "olive oil": 13},
+                "clove": {"garlic": 5}
+            }.get(unit, {})
+            return value * table.get(key, 1)
+
         seen_items = set()
 
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
@@ -479,6 +488,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
 
             quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
             quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
+            estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
 
             for store, url in store_urls.items():
                 found = False
@@ -515,18 +525,20 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 else:
                                     image_url = None
 
-                                # fix: use correct multiplier only when units are comparable
-                                if quantity_needed_val and unit_type in ["kg", "g", "ml", "l"]:
-                                    units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999))
+                                if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
+                                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
                                 else:
                                     units_needed = 1
 
                                 total_cost = units_needed * price
                                 total_quantity = units_needed * quantity_per_unit
 
-                                needed_display = format_unit_display(quantity_needed_val, unit_type) if quantity_needed_val else quantity_needed_raw
-                                if quantity_needed_val and quantity_needed_unit == "un":
-                                    needed_display += f" (~{int(quantity_needed_val)}g)"
+                                if quantity_needed_val:
+                                    needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
+                                    if quantity_needed_unit == "un":
+                                        needed_display += f" (~{int(estimated_needed_val)}g)"
+                                else:
+                                    needed_display = quantity_needed_raw
 
                                 store_carts[store].append({
                                     "ingredient": original,
@@ -542,7 +554,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                     "units_to_buy": units_needed,
                                     "total_quantity_added": total_quantity,
                                     "total_cost": f"R$ {total_cost:.2f}",
-                                    "excess_quantity": total_quantity - quantity_needed_val if quantity_needed_val else None
+                                    "excess_quantity": max(0, total_quantity - estimated_needed_val) if estimated_needed_val else None
                                 })
                                 found = True
                                 break
@@ -564,6 +576,7 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
+
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
