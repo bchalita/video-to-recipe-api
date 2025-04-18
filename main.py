@@ -391,14 +391,27 @@ def format_unit_display(qty, unit_type):
         return f"{qty}g"
     return f"{qty}{unit_map.get(unit_type.lower(), unit_type)}"
 
+
+cached_cart_result = None
+cached_last_payload = None
+cached_user_id = None
+
 @app.post("/rappi-cart")
-def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None), quantities: Optional[List[str]] = Body(None)):
-    global cached_cart_result, cached_last_payload
+def rappi_cart_search(
+    ingredients: List[str] = Body(..., embed=True),
+    recipe_title: Optional[str] = Body(None),
+    quantities: Optional[List[str]] = Body(None),
+    user_id: Optional[str] = Body(None)
+):
+    global cached_cart_result, cached_last_payload, cached_user_id
     cached_last_payload = {
         "ingredients": ingredients,
         "recipe_title": recipe_title,
-        "quantities": quantities
+        "quantities": quantities,
+        "user_id": user_id
     }
+    cached_user_id = user_id
+
     try:
         ingredient_override_map = {
             "tuna": "lombo de atum"
@@ -433,6 +446,37 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
             "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s"
         }
         store_carts = {store: [] for store in store_urls.keys()}
+
+        try:
+        recipe_data = {
+            "fields": {
+                "Title": recipe_title,
+                "Ingredients": json.dumps([{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]),
+                "Created Time": datetime.utcnow().isoformat(),
+                "Recipe JSON": json.dumps({
+                    "title": recipe_title,
+                    "ingredients": [{"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None} for i, ing in enumerate(ingredients)]
+                })
+            }
+        }
+
+        if user_id:
+            recipe_data["fields"]["User ID"] = [user_id]
+
+        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+        headers = {
+            "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.post(url, headers=headers, json=recipe_data)
+        if response.status_code not in (200, 201):
+            logger.warning(f"[rappi-cart] Failed to log recipe to Airtable: {response.text}")
+
+    except Exception as e:
+        logger.error(f"[rappi-cart] Error logging recipe to Airtable: {str(e)}")
+
+    return {"status": "recipe logged (if title present)"}
 
         def parse_required_quantity(qty_str):
             if not qty_str:
@@ -586,11 +630,47 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
             logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
         cached_cart_result = {"carts_by_store": store_carts}
+
+        # Save recipe to Airtable if title exists
+        if recipe_title:
+            try:
+                recipe_data = {
+                    "fields": {
+                        "Title": recipe_title,
+                        "Ingredients": json.dumps([
+                            {"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None}
+                            for i, ing in enumerate(ingredients)
+                        ]),
+                        "Created Time": datetime.utcnow().isoformat(),
+                        "Recipe JSON": json.dumps({
+                            "title": recipe_title,
+                            "ingredients": [
+                                {"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None}
+                                for i, ing in enumerate(ingredients)
+                            ]
+                        })
+                    }
+                }
+                if user_id:
+                    recipe_data["fields"]["User ID"] = [user_id]
+
+                url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+                headers = {
+                    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+                    "Content-Type": "application/json"
+                }
+                response = requests.post(url, headers=headers, json=recipe_data)
+                if response.status_code not in (200, 201):
+                    logger.warning(f"[rappi-cart] Failed to log recipe to Airtable: {response.text}")
+            except Exception as e:
+                logger.error(f"[rappi-cart] Error logging recipe to Airtable: {str(e)}")
+
         return cached_cart_result
 
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/rappi-cart/view")
 def get_cached_cart():
@@ -599,12 +679,14 @@ def get_cached_cart():
     raise HTTPException(status_code=404, detail="No cart data available.")
 
 cached_last_payload = None
+cached_user_id = None
 
 @app.post("/rappi-cart/reset")
 def reset_rappi_cart():
-    global cached_cart_result, cached_last_payload
+    global cached_cart_result, cached_last_payload, cached_user_id
     cached_cart_result = None
     cached_last_payload = None
+    cached_user_id = None
     return {"status": "cleared"}
 
 @app.post("/rappi-cart/resend")
@@ -614,10 +696,11 @@ def resend_rappi_cart():
     return rappi_cart_search(**cached_last_payload)
 
 @app.get("/recent-recipes")
-def get_recent_recipes():
+def get_recent_recipes(user_id: str):
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
     params = {
+        "filterByFormula": f"FIND('{user_id}', ARRAYJOIN({{User ID}}))",
         "sort[0][field]": "Created Time",
         "sort[0][direction]": "desc",
         "pageSize": 5
@@ -670,7 +753,6 @@ def get_saved_recipes(user_id: str):
             logger.warning(f"[saved-recipes] Failed to parse recipe JSON: {e}")
             continue
     return output
-
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
