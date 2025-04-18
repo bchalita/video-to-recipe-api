@@ -428,11 +428,11 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         def parse_required_quantity(qty_str):
             if not qty_str:
                 return None, ""
-            match = re.match(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade)?", qty_str.lower())
+            match = re.match(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
             if match:
                 value = float(match.group(1) + match.group(2))
                 unit = match.group(3) or "un"
-                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1}.get(unit, 1)
+                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1, "tbsp": 1, "tsp": 1, "cup": 1, "clove": 1}.get(unit, 1)
                 std_val = value * factor
                 return std_val, unit
             return None, ""
@@ -456,9 +456,21 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         def estimate_mass(ingredient_name, unit, value):
             key = ingredient_name.lower()
             table = {
-                "un": {"onion": 200, "garlic": 5},
-                "tbsp": {"butter": 14, "olive oil": 13},
-                "clove": {"garlic": 5}
+                "un": {
+                    "onion": 200, "garlic": 5, "egg": 50
+                },
+                "tbsp": {
+                    "butter": 14, "olive oil": 13, "sugar": 12, "flour": 8
+                },
+                "tsp": {
+                    "salt": 6, "pepper": 2, "sugar": 4
+                },
+                "clove": {
+                    "garlic": 5
+                },
+                "cup": {
+                    "milk": 240, "heavy cream": 240, "water": 240
+                }
             }.get(unit, {})
             return value * table.get(key, 1)
 
@@ -535,7 +547,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
 
                                 if quantity_needed_val:
                                     needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                    if quantity_needed_unit == "un":
+                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"]:
                                         needed_display += f" (~{int(estimated_needed_val)}g)"
                                 else:
                                     needed_display = quantity_needed_raw
@@ -576,6 +588,7 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
+
 
 
 def classify_image_multiple(images):
