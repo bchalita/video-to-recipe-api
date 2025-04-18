@@ -465,11 +465,14 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
             except Exception as e:
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
-            quantity_needed_raw = quantities[idx] if quantities else ""
+            quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
             quantity_needed_val = parse_required_quantity(quantity_needed_raw)
 
             for store, url in store_urls.items():
+                found = False
                 for term in search_terms:
+                    if found:
+                        break
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
                     json_data = extract_next_data_json(soup)
@@ -486,7 +489,8 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 if not all(word in title for word in translated.lower().split()):
                                     continue
 
-                                key = (store, translated, product.get("name"))
+                                product_name = product.get("name", "").strip().lower()
+                                key = (store, translated, product_name)
                                 if key in seen_items:
                                     continue
                                 seen_items.add(key)
@@ -495,7 +499,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 if image_raw and image_raw.startswith("http"):
                                     image_url = image_raw
                                 elif image_raw:
-                                    image_url = f"https://images.rappi.com.br/products/{image_raw}"
+                                    image_url = f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
                                 else:
                                     image_url = None
 
@@ -517,6 +521,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                     "total_cost": f"R$ {total_cost:.2f}",
                                     "excess_quantity": total_quantity - quantity_needed_val if quantity_needed_val else None
                                 })
+                                found = True
                                 break
                         except Exception as e:
                             logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
@@ -536,6 +541,7 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
+
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
