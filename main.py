@@ -600,7 +600,6 @@ def rappi_cart_search(
                             {"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None}
                             for i, ing in enumerate(ingredients)
                         ]),
-                        "Created Time": datetime.utcnow().isoformat(),
                         "Recipe JSON": json.dumps({
                             "title": recipe_title,
                             "ingredients": [
