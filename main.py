@@ -373,8 +373,6 @@ def get_user_interactions(user_id: str):
 
     return {"user_id": user_id, "interactions": interactions}
 
-# Store cart in memory
-cached_cart_result = None
 
 def clean_gpt_json_response(text):
     match = re.search(r"\[.*\]", text, re.DOTALL)
@@ -450,7 +448,7 @@ def rappi_cart_search(
         def parse_required_quantity(qty_str):
             if not qty_str:
                 return None, ""
-            match = re.match(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
+            match = re.match(r"(\d+)(\.?\d*)\\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
             if match:
                 value = float(match.group(1) + match.group(2))
                 unit = match.group(3) or "un"
@@ -492,6 +490,7 @@ def rappi_cart_search(
             if original.lower() in ["water", "água"]:
                 continue
 
+            base_term = translated.split()[0]
             search_terms = [translated]
             try:
                 fallback_prompt = [
@@ -509,6 +508,10 @@ def rappi_cart_search(
                 search_terms.extend(fallback_list)
             except Exception as e:
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
+
+            # Add base fallback as last resort (e.g., 'mushroom' if 'oyster mushroom' fails)
+            if base_term.lower() not in [term.lower() for term in search_terms]:
+                search_terms.append(base_term)
 
             quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
             quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
@@ -532,7 +535,7 @@ def rappi_cart_search(
                                 unit_type = product.get("unitType", "")
                                 quantity_per_unit = product.get("quantity", 1)
 
-                                if not all(word in title for word in translated.lower().split()):
+                                if not any(word in title for word in term.lower().split()):
                                     continue
 
                                 product_name = product.get("name", "").strip().lower()
@@ -542,12 +545,7 @@ def rappi_cart_search(
                                 seen_items.add(key)
 
                                 image_raw = product.get("image")
-                                if image_raw and image_raw.startswith("http"):
-                                    image_url = image_raw
-                                elif image_raw:
-                                    image_url = f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
-                                else:
-                                    image_url = None
+                                image_url = image_raw if image_raw and image_raw.startswith("http") else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
 
                                 if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
                                     units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
