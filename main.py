@@ -409,6 +409,7 @@ def rappi_cart_search(
         "user_id": user_id
     }
     cached_user_id = user_id
+    cached_cart_result = None  # Reset cart result whenever a new recipe is requested
 
     try:
         ingredient_override_map = {
@@ -492,33 +493,36 @@ def rappi_cart_search(
 
             base_term = translated.split()[0]
             search_terms = [translated]
-            try:
-                fallback_prompt = [
-                    {"role": "system", "content": (
-                        "You are a food domain expert fluent in Brazilian Portuguese. "
-                        "Avoid suggesting unrelated products (e.g., do not confuse nuts with mushrooms). "
-                        "Always prioritize food type relevance. "
-                        "If the ingredient is a specific variant (e.g., 'chestnut mushroom') that is not commonly found, suggest the broader type ('mushroom') or common synonyms. "
-                        "Respond only with valid JSON."
-                    )},
-                    {"role": "user", "content": (
-                        f"The ingredient '{translated}' was not found in a Brazilian supermarket. "
-                        "Suggest up to 5 realistic substitutions a shopper would search for instead, matching type and culinary function. "
-                        "Avoid brand names or niche regional terms. "
-                        "Return a JSON array like [\"term1\", \"term2\", ...]"
-                    )}
-                ]
-                fallback_response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=fallback_prompt,
-                    max_tokens=100
-                )
-                fallback_text = fallback_response.choices[0].message.content.strip()
-                logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
-                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
-                search_terms.extend(fallback_list)
-            except Exception as e:
-                logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
+
+            fallback_prompt = [
+                {"role": "system", "content": (
+                    "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
+                    "Fallback logic:\n"
+                    "- 'stock' or 'broth' should become 'caldo de X'\n"
+                    "- for mushrooms, prefer fresh: 'cogumelo paris', 'portobello', 'shitake', 'ostra' (in this order)\n"
+                    "- never use 'champignon' unless explicitly required\n"
+                    "- for herbs, only return pure items (no 'cheiro verde', no 'combo')\n"
+                    "- 'cream' maps to 'creme de leite', not 'creme vegetal'\n"
+                    "- 'butter' = 'manteiga' only\n"
+                    "- 'olive oil' = 'azeite de oliva extra virgem' only\n"
+                    "- 'plain flour' = 'farinha de trigo'\n"
+                    "- garlic = only fresh (no powder/flakes)\n"
+                    "If no valid substitutions exist, return an empty list. Return only a JSON array."
+                )},
+                {"role": "user", "content": (
+                    f"The ingredient '{translated}' was not found in a Brazilian supermarket. "
+                    "Suggest up to 5 realistic substitutions a shopper would search for instead."
+                )}
+            ]
+            fallback_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=fallback_prompt,
+                max_tokens=100
+            )
+            fallback_text = fallback_response.choices[0].message.content.strip()
+            logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
+            fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+            search_terms.extend(fallback_list)
 
             if base_term.lower() not in [term.lower() for term in search_terms]:
                 search_terms.append(base_term)
@@ -599,7 +603,7 @@ def rappi_cart_search(
         cached_cart_result = {"carts_by_store": store_carts}
 
         # Save recipe to Airtable if title exists
-        if recipe_title:
+        if recipe_title and translated_list:
             try:
                 recipe_data = {
                     "fields": {
@@ -636,6 +640,7 @@ def rappi_cart_search(
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
         
 @app.get("/rappi-cart/view")
 def get_cached_cart():
