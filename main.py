@@ -395,8 +395,12 @@ def format_unit_display(qty, unit_type):
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None), quantities: Optional[List[str]] = Body(None)):
     global cached_cart_result
     try:
+        ingredient_override_map = {
+            "tuna": "lombo de atum"
+        }
+
         if recipe_title and "tartare" in recipe_title.lower():
-            ingredients = ["filet mignon" if ing.lower() == "lean beef" else ing for ing in ingredients]
+            ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
 
         prompt = [
             {"role": "system", "content": (
@@ -457,19 +461,19 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
             key = ingredient_name.lower()
             table = {
                 "un": {
-                    "onion": 200, "garlic": 5, "egg": 50
+                    "onion": 200, "garlic": 5, "egg": 50, "lime": 65, "shallot": 50, "nori": 5
                 },
                 "tbsp": {
-                    "butter": 14, "olive oil": 13, "sugar": 12, "flour": 8
+                    "butter": 14, "olive oil": 13, "avocado oil": 13, "sugar": 12, "flour": 8
                 },
                 "tsp": {
-                    "salt": 6, "pepper": 2, "sugar": 4
+                    "salt": 6, "pepper": 2, "sugar": 4, "mirin": 5, "soy sauce": 5, "rice wine vinegar": 5
                 },
                 "clove": {
                     "garlic": 5
                 },
                 "cup": {
-                    "milk": 240, "heavy cream": 240, "water": 240
+                    "milk": 240, "heavy cream": 240, "water": 240, "cherry tomatoes": 150
                 }
             }.get(unit, {})
             return value * table.get(key, 1)
@@ -588,8 +592,6 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
-
-
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
