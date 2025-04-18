@@ -444,6 +444,8 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 if isinstance(val, dict) and "products" in val:
                     yield from val["products"]
 
+        seen_items = set()
+
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
             search_terms = [translated]
             try:
@@ -484,6 +486,19 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 if not all(word in title for word in translated.lower().split()):
                                     continue
 
+                                key = (store, translated, product.get("name"))
+                                if key in seen_items:
+                                    continue
+                                seen_items.add(key)
+
+                                image_raw = product.get("image")
+                                if image_raw and image_raw.startswith("http"):
+                                    image_url = image_raw
+                                elif image_raw:
+                                    image_url = f"https://images.rappi.com.br/products/{image_raw}"
+                                else:
+                                    image_url = None
+
                                 units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999)) if quantity_needed_val else 1
                                 total_cost = units_needed * price
                                 total_quantity = units_needed * quantity_per_unit
@@ -493,7 +508,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                     "translated": translated,
                                     "product_name": product.get("name"),
                                     "price": f"R$ {price:.2f}",
-                                    "image_url": product.get("image"),
+                                    "image_url": image_url,
                                     "quantity_needed": quantity_needed_raw,
                                     "quantity_unit": unit_type,
                                     "quantity_per_unit": quantity_per_unit,
