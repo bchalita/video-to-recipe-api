@@ -383,6 +383,14 @@ def clean_gpt_json_response(text):
     logger.warning(f"[rappi-cart] Could not extract JSON from GPT response: {text}")
     raise ValueError("Could not extract JSON array from GPT response")
 
+def format_unit_display(qty, unit_type):
+    unit_map = {
+        "kg": "kg", "g": "g", "l": "L", "ml": "ml", "unit": "un", "un": "un", "unidade": "un", "": "un"
+    }
+    if unit_type == "" and qty >= 50:
+        return f"{qty}g"
+    return f"{qty}{unit_map.get(unit_type.lower(), unit_type)}"
+
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None), quantities: Optional[List[str]] = Body(None)):
     global cached_cart_result
@@ -514,8 +522,10 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                     "price": f"R$ {price:.2f}",
                                     "image_url": image_url,
                                     "quantity_needed": quantity_needed_raw,
+                                    "quantity_needed_display": format_unit_display(quantity_needed_val, unit_type) if quantity_needed_val else quantity_needed_raw,
                                     "quantity_unit": unit_type,
                                     "quantity_per_unit": quantity_per_unit,
+                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
                                     "units_to_buy": units_needed,
                                     "total_quantity_added": total_quantity,
                                     "total_cost": f"R$ {total_cost:.2f}",
@@ -541,7 +551,6 @@ def get_cached_cart():
     if cached_cart_result:
         return cached_cart_result
     raise HTTPException(status_code=404, detail="No cart data available.")
-
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
