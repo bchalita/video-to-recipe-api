@@ -427,14 +427,15 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
 
         def parse_required_quantity(qty_str):
             if not qty_str:
-                return None
+                return None, ""
             match = re.match(r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade)?", qty_str.lower())
             if match:
                 value = float(match.group(1) + match.group(2))
                 unit = match.group(3) or "un"
                 factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1}.get(unit, 1)
-                return value * factor
-            return None
+                std_val = value * factor
+                return std_val, unit
+            return None, ""
 
         def extract_next_data_json(soup):
             script = soup.find("script", {"id": "__NEXT_DATA__", "type": "application/json"})
@@ -455,6 +456,9 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
         seen_items = set()
 
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
+            if original.lower() in ["water", "água"]:
+                continue
+
             search_terms = [translated]
             try:
                 fallback_prompt = [
@@ -474,7 +478,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                 logger.warning(f"[rappi-cart] Failed to parse GPT fallback for {translated}: {e}")
 
             quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
-            quantity_needed_val = parse_required_quantity(quantity_needed_raw)
+            quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
 
             for store, url in store_urls.items():
                 found = False
@@ -511,9 +515,18 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                 else:
                                     image_url = None
 
-                                units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999)) if quantity_needed_val else 1
+                                # fix: use correct multiplier only when units are comparable
+                                if quantity_needed_val and unit_type in ["kg", "g", "ml", "l"]:
+                                    units_needed = max(1, int(quantity_needed_val // quantity_per_unit + 0.999))
+                                else:
+                                    units_needed = 1
+
                                 total_cost = units_needed * price
                                 total_quantity = units_needed * quantity_per_unit
+
+                                needed_display = format_unit_display(quantity_needed_val, unit_type) if quantity_needed_val else quantity_needed_raw
+                                if quantity_needed_val and quantity_needed_unit == "un":
+                                    needed_display += f" (~{int(quantity_needed_val)}g)"
 
                                 store_carts[store].append({
                                     "ingredient": original,
@@ -522,7 +535,7 @@ def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_tit
                                     "price": f"R$ {price:.2f}",
                                     "image_url": image_url,
                                     "quantity_needed": quantity_needed_raw,
-                                    "quantity_needed_display": format_unit_display(quantity_needed_val, unit_type) if quantity_needed_val else quantity_needed_raw,
+                                    "quantity_needed_display": needed_display,
                                     "quantity_unit": unit_type,
                                     "quantity_per_unit": quantity_per_unit,
                                     "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
