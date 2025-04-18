@@ -393,7 +393,12 @@ def format_unit_display(qty, unit_type):
 
 @app.post("/rappi-cart")
 def rappi_cart_search(ingredients: List[str] = Body(..., embed=True), recipe_title: Optional[str] = Body(None), quantities: Optional[List[str]] = Body(None)):
-    global cached_cart_result
+    global cached_cart_result, cached_last_payload
+    cached_last_payload = {
+        "ingredients": ingredients,
+        "recipe_title": recipe_title,
+        "quantities": quantities
+    }
     try:
         ingredient_override_map = {
             "tuna": "lombo de atum"
@@ -597,7 +602,7 @@ cached_last_payload = None
 
 @app.post("/rappi-cart/reset")
 def reset_rappi_cart():
-    global cached_cart_result, cached_last_payload
+    global cached_cart_result
     cached_cart_result = None
     return {"status": "cleared"}
 
