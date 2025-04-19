@@ -245,60 +245,6 @@ def save_recipe(payload: dict):
 
     return {"status": "success"}
     
-@app.get("/saved-recipes/{user_id}")
-def get_saved_recipes(user_id: str):
-    """Retrieve saved recipes for a specified user."""
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
-    resp = requests.get(url, headers=headers, params=params)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Could not retrieve saved recipes")
-    records = resp.json().get("records", [])
-    # return only fields or full records as needed
-    return records
-
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
-    }
-    params = {
-        "filterByFormula": f"{{Email}} = '{user.email}'"
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    check = requests.get(url, headers=headers, params=params)
-
-    if check.status_code == 200 and check.json().get("records"):
-        # Duplicate email detected
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    post_headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    hashed_password = hashlib.sha256(user.password.encode()).hexdigest()
-    payload = {
-        "fields": {
-            "User ID": str(uuid.uuid4()),
-            "Name": user.name,
-            "Email": user.email,
-            "Password": hashed_password,
-            "Authentication Provider": "email",
-            "Registration Date": str(date.today()),
-            "Number of Uploaded Recipes": 0
-        }
-    }
-    response = requests.post(url, headers=post_headers, json=payload)
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to create user")
-
-    return {"success": True, "user_id": payload["fields"]["User ID"]}
-
-class UserInteraction(BaseModel):
-    user_id: str
-    recipe_id: str
-    action: str  # e.g. "saved", "viewed"
-    timestamp: Optional[str] = None
 
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
@@ -498,22 +444,83 @@ def rappi_cart_search(
                 {"role": "system", "content": (
                     "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
                     "Fallback logic:\n"
-                    "- 'stock' or 'broth' should become 'caldo de X'\n"
-                    "- for mushrooms, prefer fresh: 'cogumelo paris', 'portobello', 'shitake', 'ostra' (in this order)\n"
-                    "- never use 'champignon' unless explicitly required\n"
-                    "- for herbs, only return pure items (no 'cheiro verde', no 'combo')\n"
-                    "- 'cream' maps to 'creme de leite', not 'creme vegetal'\n"
-                    "- 'butter' = 'manteiga' only\n"
-                    "- 'olive oil' = 'azeite de oliva extra virgem' only\n"
-                    "- 'plain flour' = 'farinha de trigo'\n"
-                    "- garlic = only fresh (no powder/flakes)\n"
-                    "If no valid substitutions exist, return an empty list. Return only a JSON array."
+                    "- 'stock' or 'broth' should become 'caldo de X' (e.g., mushroom = 'caldo de cogumelo', chicken = 'caldo de galinha')\n"
+                    "- mushrooms fallback to fresh: 'cogumelo paris', 'portobello', 'shitake', 'ostra' in this order\n"
+                    "- no 'champignon' unless explicitly specified\n"
+                    "- herbs must be pure: never 'cheiro verde' or combinations\n"
+                    "- broccolini = 'brócolis ramoso' or 'brócolis ninja' (prefer fresh)\n"
+                    "- plain flour = 'farinha de trigo' only\n"
+                    "- butter = 'manteiga', not margarina\n"
+                    "- oil = 'óleo vegetal' or 'óleo de soja' unless specified\n"
+                    "- vinegar fallback includes rice vinegar, but never with additional flavoring\n"
+                    "- no misinterpretation like 'arroz' for 'macarrão de arroz' (must contain 'macarrão' or 'bifum')\n"
+                    "- garlic must not include 'alho poró', 'alho em pó', or dried unless asked\n"
+                    "- 'cornflour' or 'cornstarch' = 'amido de milho'\n"
+                    "- 'salt and pepper' must reject anything with 'salsa', 'ervas finas', or mixed condiments\n"
+                    "- sauces like 'oyster sauce' or 'soy sauce' must contain matching keyword like 'ostra' or 'soja'\n"
+                    "Additional rules:\n"
+                    "- If ingredient is 'macarrão de arroz largo', reject any product that is just 'arroz' without 'macarrão' or 'bifum'\n"
+                    "- For broccolini, prefer fresh 'brócolis ramoso' or 'ninja'. Reject frozen unless fresh unavailable\n"
+                    "- Normalize quantities like '2 tbsp' to grams for better comparison\n"
+                    "Return a JSON list of maximum 5 alternatives. Return [] if nothing valid."
                 )},
                 {"role": "user", "content": (
                     f"The ingredient '{translated}' was not found in a Brazilian supermarket. "
                     "Suggest up to 5 realistic substitutions a shopper would search for instead."
                 )}
             ]
+
+
+            # Quantity normalization utility (add before cart assembly logic)
+            UNIT_NORMALIZATION = {
+                "tsp": 5,
+                "tbsp": 15,
+                "cup": 240,
+                "bunch": 250,
+                "clove": 6,
+                "egg": 50,
+                "slice": 25,
+                "pinch": 1,
+            }
+            
+            def normalize_quantity(quantity_str: str, ingredient_name: str = "") -> Optional[float]:
+                import re
+                match = re.match(r"([\d/.]+)\s*([a-zA-Z]+)", quantity_str.lower())
+                if not match:
+                    if "clove" in quantity_str.lower():
+                        return 6 * int(re.search(r"\d+", quantity_str).group())
+                    if "egg" in quantity_str.lower():
+                        return 50
+                    return None
+            
+                value, unit = match.groups()
+                try:
+                    value = eval(value)
+                except:
+                    return None
+            
+                unit = unit.rstrip("s")
+                if unit in UNIT_NORMALIZATION:
+                    return value * UNIT_NORMALIZATION[unit]
+                return None
+
+            # Add this block just before fallback_response logic
+            needed_quantity_raw = ingredient.get("quantity")
+            unit_quantity = product.get("quantity_per_unit")
+            normalized_needed_qty = normalize_quantity(needed_quantity_raw, ingredient.get("name", ""))
+            
+            try:
+                product_qty = float(unit_quantity)
+            except:
+                product_qty = None
+            
+            if normalized_needed_qty is not None and product_qty:
+                units_to_buy = max(1, math.ceil(normalized_needed_qty / product_qty))
+                total_quantity_added = product_qty * units_to_buy
+            else:
+                units_to_buy = 1
+                total_quantity_added = product_qty if product_qty else None
+
             fallback_response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=fallback_prompt,
@@ -766,6 +773,8 @@ async def upload_video(
       • a TikTok URL (downloads video + fetches description), or
       • a video file upload.
     Extract frames, classify, and run GPT-4o on combined description + images.
+    Also persist the parsed recipe JSON in Airtable's **Recipes** table so it can be
+    surfaced later as a recent recipe.
     """
     temp_dir    = None
     description = ""
@@ -824,13 +833,13 @@ async def upload_video(
         def gpt_prompt(frames_subset: List[str]):
             parts = []
             if description:
-                parts.append(f"Here is the video description:\\n{description}\\n")
+                parts.append(f"Here is the video description:\n{description}\n")
             parts.append(
                 "You are an expert recipe extractor. "
                 "Based on the images, output valid JSON with keys: "
                 "title, ingredients (list of {name,quantity}), steps (list), cook_time_minutes (int)."
             )
-            system_msg = {"role": "system", "content": "\\n\\n".join(parts)}
+            system_msg = {"role": "system", "content": "\n\n".join(parts)}
 
             user_list = [{"type":"text","text":"Extract recipe JSON from these frames:"}]
             for fpath in frames_subset:
@@ -870,8 +879,31 @@ async def upload_video(
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to parse GPT output: {str(e)}")
 
+        # 9. Persist recipe to Airtable "Recipes" table --------------------
+        try:
+            headers = {
+                "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "fields": {
+                    "Title": parsed.get("title") or "Untitled",
+                    "Recipe JSON": json.dumps(parsed),
+                }
+            }
+            # Attach user link if supplied
+            if user_id:
+                payload["fields"]["User ID"] = [user_id]
 
-        # 9. Construct and return result
+            url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+            resp = requests.post(url, headers=headers, json=payload)
+            if resp.status_code not in (200, 201):
+                logger.warning(f"[upload-video] Failed to save recipe to Airtable: {resp.text}")
+        except Exception as e:
+            logger.error(f"[upload-video] Error saving recipe to Airtable: {str(e)}")
+        # -----------------------------------------------------------------
+
+        # 10. Construct and return result
         return {
             "title": parsed.get("title"),
             "ingredients": parsed.get("ingredients"),
@@ -891,48 +923,6 @@ async def upload_video(
         # Cleanup temp files
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
-
-
-@app.get("/user-recipes")
-def get_user_recipes(user_id: str):
-    """
-    Return all saved recipes for a given user from Airtable.
-    """
-    import logging
-    logger = logging.getLogger("main")
-
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
-    }
-
-    filter_formula = f"FIND('{user_id}', ARRAYJOIN({{User ID}}))"
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
-    params = {"filterByFormula": filter_formula}
-
-    resp = requests.get(url, headers=headers, params=params)
-    logger.info(f"[user-recipes] GET {resp.url} → status {resp.status_code}")
-
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch recipes")
-
-    raw_data = resp.json()
-    logger.debug(f"[user-recipes] Raw Airtable response: {raw_data}")
-
-    recipes = []
-    for record in raw_data.get("records", []):
-        recipe_json_str = record.get("fields", {}).get("Recipe JSON")
-        if recipe_json_str:
-            try:
-                recipe_data = json.loads(recipe_json_str)
-                recipes.append({
-                    "id": record["id"],
-                    "title": recipe_data.get("title") or record.get("fields", {}).get("Title"),
-                    "cook_time_minutes": recipe_data.get("cookTimeMinutes"),
-                    "full": recipe_data
-                })
-            except Exception as e:
-                logger.warning(f"[user-recipes] Could not parse recipe: {e}")
-    return recipes
 
 
 def sync_user_to_airtable(user: UserDB):
