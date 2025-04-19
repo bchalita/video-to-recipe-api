@@ -477,57 +477,6 @@ def rappi_cart_search(
                 )}
             ]
 
-
-            # Quantity normalization utility (add before cart assembly logic)
-            UNIT_NORMALIZATION = {
-                "tsp": 5,
-                "tbsp": 15,
-                "cup": 240,
-                "bunch": 250,
-                "clove": 6,
-                "egg": 50,
-                "slice": 25,
-                "pinch": 1,
-            }
-            
-            def normalize_quantity(quantity_str: str, ingredient_name: str = "") -> Optional[float]:
-                import re
-                match = re.match(r"([\d/.]+)\s*([a-zA-Z]+)", quantity_str.lower())
-                if not match:
-                    if "clove" in quantity_str.lower():
-                        return 6 * int(re.search(r"\d+", quantity_str).group())
-                    if "egg" in quantity_str.lower():
-                        return 50
-                    return None
-            
-                value, unit = match.groups()
-                try:
-                    value = eval(value)
-                except:
-                    return None
-            
-                unit = unit.rstrip("s")
-                if unit in UNIT_NORMALIZATION:
-                    return value * UNIT_NORMALIZATION[unit]
-                return None
-
-            # Add this block just before fallback_response logic
-            needed_quantity_raw = ingredient.get("quantity")
-            unit_quantity = product.get("quantity_per_unit")
-            normalized_needed_qty = normalize_quantity(needed_quantity_raw, ingredient.get("name", ""))
-            
-            try:
-                product_qty = float(unit_quantity)
-            except:
-                product_qty = None
-            
-            if normalized_needed_qty is not None and product_qty:
-                units_to_buy = max(1, math.ceil(normalized_needed_qty / product_qty))
-                total_quantity_added = product_qty * units_to_buy
-            else:
-                units_to_buy = 1
-                total_quantity_added = product_qty if product_qty else None
-
             fallback_response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=fallback_prompt,
