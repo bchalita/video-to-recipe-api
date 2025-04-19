@@ -101,6 +101,13 @@ class Recipe(BaseModel):
     cook_time_minutes: int
     user_id: Optional[str] = None
 
+class UserInteraction(BaseModel):
+    user_id: str
+    recipe_id: str
+    action: str
+    timestamp: Optional[str] = None
+
+
 def get_db():
     db = SessionLocal()
     try:
