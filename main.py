@@ -532,13 +532,14 @@ def rappi_cart_search(
                                 total_cost = units_needed * price
                                 total_quantity = units_needed * quantity_per_unit
 
-                                if quantity_needed_val:
+                                # ----- BEGIN: normalized needed display -----
+                                if quantity_needed_val is not None:
                                     needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"]:
+                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"] and estimated_needed_val:
                                         needed_display += f" (~{int(estimated_needed_val)}g)"
                                 else:
                                     needed_display = quantity_needed_raw
-
+                    # ----- END: normalized needed display -----
                                 store_carts[store].append({
                                     "ingredient": original,
                                     "translated": translated,
@@ -553,7 +554,7 @@ def rappi_cart_search(
                                     "units_to_buy": units_needed,
                                     "total_quantity_added": total_quantity,
                                     "total_cost": f"R$ {total_cost:.2f}",
-                                    "excess_quantity": max(0, total_quantity - estimated_needed_val) if estimated_needed_val else None
+                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
                                 })
                                 found = True
                                 break
@@ -564,39 +565,6 @@ def rappi_cart_search(
             logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
         cached_cart_result = {"carts_by_store": store_carts}
-
-        # Save recipe to Airtable if title exists
-        if recipe_title and translated_list:
-            try:
-                recipe_data = {
-                    "fields": {
-                        "Title": recipe_title,
-                        "Ingredients": json.dumps([
-                            {"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None}
-                            for i, ing in enumerate(ingredients)
-                        ]),
-                        "Recipe JSON": json.dumps({
-                            "title": recipe_title,
-                            "ingredients": [
-                                {"name": ing, "quantity": quantities[i] if quantities and i < len(quantities) else None}
-                                for i, ing in enumerate(ingredients)
-                            ]
-                        })
-                    }
-                }
-                if user_id:
-                    recipe_data["fields"]["User ID"] = [user_id]
-
-                url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-                headers = {
-                    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                response = requests.post(url, headers=headers, json=recipe_data)
-                if response.status_code not in (200, 201):
-                    logger.warning(f"[rappi-cart] Failed to log recipe to Airtable: {response.text}")
-            except Exception as e:
-                logger.error(f"[rappi-cart] Error logging recipe to Airtable: {str(e)}")
 
         return cached_cart_result
 
