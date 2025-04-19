@@ -626,6 +626,7 @@ def get_recent_recipes(user_id: str):
         except Exception as e:
             logger.warning(f"[recent-recipes] Failed to parse recipe JSON: {e}")
             continue
+    logger.info(f"[recent-recipes] Parsed output: {json.dumps(output, indent=2, ensure_ascii=False)}")
     return output
 
 @app.get("/saved-recipes/{user_id}")
