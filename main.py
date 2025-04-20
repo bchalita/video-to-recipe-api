@@ -809,19 +809,16 @@ async def upload_video(
 
         # 9. Persist recipe to Airtable "Recipes" table --------------------
         try:
-            headers = {
-                "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "fields": {
-                    "Title": parsed.get("title") or "Untitled",
-                    "Recipe JSON": json.dumps(parsed),
-                }
-            }
-            # Attach user link if supplied
+# Look up Airtable record ID based on user_id (which is the UUID, not Airtable record ID)
             if user_id:
-                payload["fields"]["User ID"] = [user_id]
+                headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+                params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+                user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+                user_response = requests.get(user_url, headers=headers, params=params)
+                if user_response.status_code == 200 and user_response.json().get("records"):
+                    airtable_record_id = user_response.json()["records"][0]["id"]
+                    payload["fields"]["User ID"] = [airtable_record_id]
+            
 
             url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
             resp = requests.post(url, headers=headers, json=payload)
