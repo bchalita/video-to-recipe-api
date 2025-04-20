@@ -159,40 +159,43 @@ class UserSignup(BaseModel):
 
 @app.post("/signup")
 def signup(user: UserSignup):
-    """
-    Register a new user in Airtable. Prevents duplicate emails.
-    """
-    # 1. Check for existing user by email
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params  = {"filterByFormula": f"{{Email}} = '{user.email}'"}
-    url     = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    resp    = requests.get(url, headers=headers, params=params)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch user")
-    if resp.json().get("records"):
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+    params = {
+        "filterByFormula": f"{{Email}} = '{user.email}'"
+    }
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    check = requests.get(url, headers=headers, params=params)
+
+    if check.status_code == 200 and check.json().get("records"):
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # 2. Create the user
     post_headers = {
         "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-        "Content-Type":  "application/json"
+        "Content-Type": "application/json"
     }
+    user_id = str(uuid.uuid4())
     payload = {
         "fields": {
-            "Name":              user.name,
-            "Email":             user.email,
-            "Password":          hashlib.sha256(user.password.encode()).hexdigest(),
-            "Registration Date": str(date.today())
+            "User ID": user_id,
+            "Name": user.name,
+            "Email": user.email,
+            "Password": hashlib.sha256(user.password.encode()).hexdigest(),
+            "Authentication Provider": "email",
+            "Registration Date": str(date.today()),
+            "Number of Uploaded Recipes": 0
         }
     }
-    r2 = requests.post(url, headers=post_headers, json=payload)
 
-    if r2.status_code not in (200, 201):
+    response = requests.post(url, headers=post_headers, json=payload)
+
+    if response.status_code != 200:
+        logger.error(f"[signup] Airtable error: {response.text}")
         raise HTTPException(status_code=500, detail="Failed to create user")
 
-    res = r2.json()
-    # Use Airtable record ID as the user ID
-    return {"success": True, "user_id": res.get("id")}
+    logger.info(f"[signup] New user created with ID: {user_id}")
+    return {"success": True, "user_id": user_id}
 
 @app.post("/save-recipe")
 def save_recipe(payload: dict):
