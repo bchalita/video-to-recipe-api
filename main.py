@@ -809,7 +809,28 @@ async def upload_video(
 
         # 9. Persist recipe to Airtable "Recipes" table --------------------
         try:
-# Look up Airtable record ID based on user_id (which is the UUID, not Airtable record ID)
+            content = video.file.read()
+            filename = f"{str(uuid.uuid4())}.mp4"
+            with open(filename, "wb") as f:
+                f.write(content)
+    
+            recipe_title = title or "Recipe"
+    
+            payload = {
+                "fields": {
+                    "Title": recipe_title,
+                    "Video Filename": filename,
+                    "Upload Timestamp": datetime.datetime.utcnow().isoformat()
+                }
+            }
+    
+            if steps:
+                payload["fields"]["Steps"] = steps
+    
+            if ingredients:
+                payload["fields"]["Ingredients"] = ingredients
+    
+            # Look up Airtable record ID based on user_id (which is the UUID, not Airtable record ID)
             if user_id:
                 headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
                 params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
@@ -818,14 +839,24 @@ async def upload_video(
                 if user_response.status_code == 200 and user_response.json().get("records"):
                     airtable_record_id = user_response.json()["records"][0]["id"]
                     payload["fields"]["User ID"] = [airtable_record_id]
-            
-
+    
             url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-            resp = requests.post(url, headers=headers, json=payload)
-            if resp.status_code not in (200, 201):
-                logger.warning(f"[upload-video] Failed to save recipe to Airtable: {resp.text}")
-        except Exception as e:
-            logger.error(f"[upload-video] Error saving recipe to Airtable: {str(e)}")
+            headers = {
+                "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            response = requests.post(url, headers=headers, json=payload)
+    
+            if response.status_code not in (200, 201):
+                logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
+                raise HTTPException(status_code=500, detail="Failed to save recipe")
+    
+            return {"success": True, "recipe_id": response.json().get("id")}
+
+    except Exception as e:
+        logger.error(f"[upload-video] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
         # -----------------------------------------------------------------
 
         # 10. Construct and return result
