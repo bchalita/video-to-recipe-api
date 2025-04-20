@@ -871,6 +871,10 @@ async def upload_video(
             # Cleanup temp files
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
+    
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
