@@ -849,7 +849,8 @@ async def upload_video(
         
             # 9. Persist recipe to Airtable "Recipes" table --------------------
             try:
-                content = video.file.read()
+                with open(video_path, "rb") as f:
+                    content = f.read()  # ✅ Reads from the file you just saved earlier
                 filename = f"{str(uuid.uuid4())}.mp4"
                 with open(filename, "wb") as f:
                     f.write(content)
