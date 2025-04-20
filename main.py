@@ -836,7 +836,7 @@ async def upload_video(
             payload = {
                 "fields": {
                     "Title": recipe_title,
-                    "Steps": steps,
+                    "Steps": json.dumps(steps),
                     "Ingredients": json.dumps(ingredients),
                     "Recipe JSON": json.dumps(parsed)
                 }
