@@ -836,8 +836,6 @@ async def upload_video(
             payload = {
                 "fields": {
                     "Title": recipe_title,
-                    "Video Filename": filename,
-                    "Upload Timestamp": datetime.utcnow().isoformat(),
                     "Steps": steps,
                     "Ingredients": json.dumps(ingredients),
                     "Recipe JSON": json.dumps(parsed)
