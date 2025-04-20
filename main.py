@@ -732,23 +732,14 @@ def get_known_ingredients_and_dishes():
 @app.post("/upload-video")
 async def upload_video(
     file: UploadFile = File(None),
-    tiktok_url: str    = Form(None),
+    tiktok_url: str = Form(None),
     user_id: Optional[str] = Form(None)
 ):
-    """
-    Accept either:
-      • a TikTok URL (downloads video + fetches description), or
-      • a video file upload.
-    Extract frames, classify, and run GPT-4o on combined description + images.
-    Also persist the parsed recipe JSON in Airtable's **Recipes** table so it can be
-    surfaced later as a recent recipe.
-    """
-    temp_dir    = None
+    temp_dir = None
     description = ""
-    frames      = []
+    frames = []
 
     try:
-        # 1. If TikTok URL provided, download video and fetch description
         if tiktok_url:
             temp_dir = tempfile.mkdtemp()
             ydl_opts = {
@@ -760,9 +751,8 @@ async def upload_video(
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(tiktok_url, download=True)
                 description = info.get("description", "") or ""
-                video_path  = ydl.prepare_filename(info)
+                video_path = ydl.prepare_filename(info)
 
-        # 2. If file provided, save locally
         if file:
             if not temp_dir:
                 temp_dir = tempfile.mkdtemp()
@@ -770,11 +760,9 @@ async def upload_video(
             with open(video_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
 
-        # 3. Validate input
         if not (tiktok_url or file):
             raise HTTPException(status_code=400, detail="Must provide a TikTok URL or video file")
 
-        # 4. Extract frames via FFmpeg
         frames_dir = os.path.join(temp_dir, "frames")
         os.makedirs(frames_dir, exist_ok=True)
         subprocess.run([
@@ -789,14 +777,11 @@ async def upload_video(
         if not frames:
             raise HTTPException(status_code=500, detail="No frames extracted")
 
-        # 5. Optionally classify images
         guess_id = classify_image_multiple(frames) if frames else None
 
-        # 6. Prepare frames for GPT (cap at 90)
         selected = frames[:90]
-        mid      = len(selected) // 2
+        mid = len(selected) // 2
 
-        # 7. Build GPT prompt including description
         def gpt_prompt(frames_subset: List[str]):
             parts = []
             if description:
@@ -808,7 +793,7 @@ async def upload_video(
             )
             system_msg = {"role": "system", "content": "\n\n".join(parts)}
 
-            user_list = [{"type":"text","text":"Extract recipe JSON from these frames:"}]
+            user_list = [{"type": "text", "text": "Extract recipe JSON from these frames:"}]
             for fpath in frames_subset:
                 b64 = base64.b64encode(open(fpath, "rb").read()).decode()
                 user_list.append({
@@ -818,9 +803,8 @@ async def upload_video(
                     }
                 })
 
-            return [system_msg, {"role":"user","content": user_list}]
+            return [system_msg, {"role": "user", "content": user_list}]
 
-        # 8. Run GPT in two passes
         try:
             first_pass = client.chat.completions.create(
                 model="gpt-4o",
@@ -832,90 +816,83 @@ async def upload_video(
                 messages=gpt_prompt(selected[mid:]),
                 max_tokens=1000
             )
-        
-            # Combine GPT outputs
+
             combined = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
-        
-            # Log raw GPT response to help debug format issues
             print(f"[DEBUG] Raw GPT response (first 500 chars):\n{combined[:500]}")
-        
-            # Try to extract JSON from a ```json code block
+
             match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined, re.DOTALL)
-        
+
             try:
                 parsed = json.loads(match.group(1).strip() if match else combined)
             except Exception as e:
                 raise HTTPException(status_code=500, detail=f"Failed to parse GPT output: {str(e)}")
-        
-            # 9. Persist recipe to Airtable "Recipes" table --------------------
-            try:
-                with open(video_path, "rb") as f:
-                    content = f.read()  # ✅ Reads from the file you just saved earlier
-                filename = f"{str(uuid.uuid4())}.mp4"
-                with open(filename, "wb") as f:
-                    f.write(content)
-        
-                recipe_title = title or "Recipe"
-        
-                payload = {
-                    "fields": {
-                        "Title": recipe_title,
-                        "Video Filename": filename,
-                        "Upload Timestamp": datetime.datetime.utcnow().isoformat()
-                    }
+
+            with open(video_path, "rb") as f:
+                content = f.read()
+            filename = f"{str(uuid.uuid4())}.mp4"
+            with open(filename, "wb") as f:
+                f.write(content)
+
+            recipe_title = parsed.get("title") or "Recipe"
+            ingredients = parsed.get("ingredients")
+            steps = parsed.get("steps")
+
+            payload = {
+                "fields": {
+                    "Title": recipe_title,
+                    "Video Filename": filename,
+                    "Upload Timestamp": datetime.datetime.utcnow().isoformat()
                 }
-        
-                if steps:
-                    payload["fields"]["Steps"] = steps
-        
-                if ingredients:
-                    payload["fields"]["Ingredients"] = ingredients
-        
-                # Look up Airtable record ID based on user_id (which is the UUID, not Airtable record ID)
-                if user_id:
-                    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-                    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-                    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-                    user_response = requests.get(user_url, headers=headers, params=params)
-                    if user_response.status_code == 200 and user_response.json().get("records"):
-                        airtable_record_id = user_response.json()["records"][0]["id"]
-                        payload["fields"]["User ID"] = [airtable_record_id]
-        
-                url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-                headers = {
-                    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                    "Content-Type": "application/json"
+            }
+
+            if steps:
+                payload["fields"]["Steps"] = steps
+
+            if ingredients:
+                payload["fields"]["Ingredients"] = ingredients
+
+            if user_id:
+                headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+                params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+                user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+                user_response = requests.get(user_url, headers=headers, params=params)
+                if user_response.status_code == 200 and user_response.json().get("records"):
+                    airtable_record_id = user_response.json()["records"][0]["id"]
+                    payload["fields"]["User ID"] = [airtable_record_id]
+
+            url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+            headers = {
+                "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+                "Content-Type": "application/json"
+            }
+            response = requests.post(url, headers=headers, json=payload)
+
+            if response.status_code not in (200, 201):
+                logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
+                raise HTTPException(status_code=500, detail="Failed to save recipe")
+
+            return {
+                "title": parsed.get("title"),
+                "ingredients": parsed.get("ingredients"),
+                "steps": parsed.get("steps"),
+                "cook_time_minutes": parsed.get("cook_time_minutes"),
+                "debug": {
+                    "frames_processed": len(frames),
+                    "model_hint": guess_id or "n/a"
                 }
-                response = requests.post(url, headers=headers, json=payload)
-        
-                if response.status_code not in (200, 201):
-                    logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
-                    raise HTTPException(status_code=500, detail="Failed to save recipe")
-        
-                return {
-                    "title": parsed.get("title"),
-                    "ingredients": parsed.get("ingredients"),
-                    "steps": parsed.get("steps"),
-                    "cook_time_minutes": parsed.get("cook_time_minutes"),
-                    "debug": {
-                        "frames_processed": len(frames),
-                        "model_hint": guess_id or "n/a"
-                    }
-                }
-        
-            except Exception as e:
-                logger.error(f"[upload-video] Error: {str(e)}")
-                raise HTTPException(status_code=500, detail=str(e))
-        
+            }
+
+        except Exception as e:
+            logger.error(f"[upload-video] Error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+
         finally:
-            # Cleanup temp files
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
-    
+
     except Exception as e:
         import traceback; traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
-
 
 
 def sync_user_to_airtable(user: UserDB):
