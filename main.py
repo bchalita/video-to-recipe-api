@@ -783,15 +783,15 @@ async def upload_video(
 
         # 8. Run GPT in two passes
         first_pass = client.chat.completions.create(
-            model="gpt-4o",
-            messages=gpt_prompt(selected[:mid]),
-            max_tokens=1000
-        )
+                    model="gpt-4o",
+                    messages=gpt_prompt(selected[:mid]),
+                    max_tokens=1000
+                )
         second_pass = client.chat.completions.create(
-            model="gpt-4o",
-            messages=gpt_prompt(selected[mid:]),
-            max_tokens=1000
-        )
+                    model="gpt-4o",
+                    messages=gpt_prompt(selected[mid:]),
+                    max_tokens=1000
+                )
         
         # Combine GPT outputs
         combined = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
@@ -806,16 +806,16 @@ async def upload_video(
             parsed = json.loads(match.group(1).strip() if match else combined)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to parse GPT output: {str(e)}")
-
+        
         # 9. Persist recipe to Airtable "Recipes" table --------------------
         try:
             content = video.file.read()
             filename = f"{str(uuid.uuid4())}.mp4"
             with open(filename, "wb") as f:
                 f.write(content)
-    
+        
             recipe_title = title or "Recipe"
-    
+        
             payload = {
                 "fields": {
                     "Title": recipe_title,
@@ -823,13 +823,13 @@ async def upload_video(
                     "Upload Timestamp": datetime.datetime.utcnow().isoformat()
                 }
             }
-    
+        
             if steps:
                 payload["fields"]["Steps"] = steps
-    
+        
             if ingredients:
                 payload["fields"]["Ingredients"] = ingredients
-    
+        
             # Look up Airtable record ID based on user_id (which is the UUID, not Airtable record ID)
             if user_id:
                 headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
@@ -839,26 +839,24 @@ async def upload_video(
                 if user_response.status_code == 200 and user_response.json().get("records"):
                     airtable_record_id = user_response.json()["records"][0]["id"]
                     payload["fields"]["User ID"] = [airtable_record_id]
-    
+        
             url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
             headers = {
                 "Authorization": f"Bearer {AIRTABLE_API_KEY}",
                 "Content-Type": "application/json"
             }
             response = requests.post(url, headers=headers, json=payload)
-    
+        
             if response.status_code not in (200, 201):
                 logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
                 raise HTTPException(status_code=500, detail="Failed to save recipe")
-    
-            return {"success": True, "recipe_id": response.json().get("id")}
-
-    except Exception as e:
-        logger.error(f"[upload-video] Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
+        
+        except Exception as e:
+            logger.error(f"[upload-video] Error: {str(e)}")
+            raise HTTPException(status_code=500, detail=str(e))
+        
         # -----------------------------------------------------------------
-
+        
         # 10. Construct and return result
         return {
             "title": parsed.get("title"),
@@ -870,15 +868,15 @@ async def upload_video(
                 "model_hint": guess_id or "n/a"
             }
         }
-
-    except Exception as e:
-        import traceback; traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
-
-    finally:
-        # Cleanup temp files
-        if temp_dir and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+        
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            raise HTTPException(status_code=500, detail=str(e))
+        
+        finally:
+            # Cleanup temp files
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
 
 
 def sync_user_to_airtable(user: UserDB):
