@@ -535,7 +535,14 @@ def rappi_cart_search(
             )
             fallback_text = fallback_response.choices[0].message.content.strip()
             logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
-            fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+            
+            try:
+                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+                if not isinstance(fallback_list, list):
+                    raise ValueError("Fallback is not a JSON list.")
+            except Exception as e:
+                logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
+                fallback_list = []
             search_terms.extend(fallback_list)
 
             if base_term.lower() not in [term.lower() for term in search_terms]:
