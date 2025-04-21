@@ -365,7 +365,6 @@ def rappi_cart_search(
         "user_id": user_id
     }
     cached_user_id = user_id
-    cached_cart_result = None  # Reset cart result whenever a new recipe is requested
 
     try:
         ingredient_override_map = {
@@ -603,13 +602,18 @@ def rappi_cart_search(
                                 break
                         except Exception as e:
                             logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
-
+        
         for store, items in store_carts.items():
             logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
-        cached_cart_result = {"carts_by_store": store_carts}
-
-        return cached_cart_result
+        # ▶️ Logging number of items per store
+        for store, items in store_carts.items():
+            logger.info(f"[rappi-cart] {store} has {len(items)} items")
+        # ▶️ Fix #1 & #3: assign to local var, cache and return
+        final_cart_result = {"carts_by_store": store_carts}
+        cached_cart_result = final_cart_result
+        logger.info("[rappi-cart] Cart result cached and returned.")
+        return final_cart_result
 
     except Exception as e:
         logger.error(f"[rappi-cart] Error: {str(e)}")
@@ -618,12 +622,10 @@ def rappi_cart_search(
         
 @app.get("/rappi-cart/view")
 def get_cached_cart():
-    if cached_cart_result:
-        return cached_cart_result or {"carts_by_store": {}, "message": "No cart built yet"}
-    raise HTTPException(status_code=404, detail="No cart data available.")
-
-cached_last_payload = None
-cached_user_id = None
+    # ▶️ Fix #2: simplify view endpoint
+    if not cached_cart_result:
+        raise HTTPException(status_code=404, detail="No cart data available.")
+    return cached_cart_result
 
 @app.post("/rappi-cart/reset")
 def reset_rappi_cart():
