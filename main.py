@@ -453,6 +453,7 @@ def rappi_cart_search(
             fallback_prompt = [
                 {"role": "system", "content": (
                     "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
+                    "Return only a JSON list of maximum 5 alternatives. No bullet points, no numbers, no extra text. Return [] if nothing valid.\n"
                     "Fallback logic:\n"
                     "- 'stock' or 'broth' → 'caldo de X' (e.g., mushroom = 'caldo de cogumelo', chicken = 'caldo de galinha')\n"
                     "- Mushrooms → 'cogumelo paris', 'portobello', 'shitake', 'ostra' in this order\n"
@@ -618,7 +619,7 @@ def rappi_cart_search(
 @app.get("/rappi-cart/view")
 def get_cached_cart():
     if cached_cart_result:
-        return cached_cart_result
+        return cached_cart_result or {"carts_by_store": {}, "message": "No cart built yet"}
     raise HTTPException(status_code=404, detail="No cart data available.")
 
 cached_last_payload = None
@@ -843,10 +844,14 @@ async def upload_video(
             }
 
             if user_id:
+                print(f"[DEBUG] Looking for user with UUID: {user_id}")  # <<< ADD HERE
+
                 headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
                 params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
                 user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
                 user_response = requests.get(user_url, headers=headers, params=params)
+                print("[DEBUG] Airtable user lookup result:", user_response.json())  # <<< ADD HERE
+
                 if user_response.status_code == 200 and user_response.json().get("records"):
                     airtable_record_id = user_response.json()["records"][0]["id"]
                     payload["fields"]["User ID"] = [airtable_record_id]
