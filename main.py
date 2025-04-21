@@ -472,7 +472,7 @@ def rappi_cart_search(
                     "- 'filet mignon' → assume beef unless 'suíno' is explicitly stated\n"
                     "- 'cream' used in pasta or sauces → 'creme de leite fresco'\n"
                     "- 'onions' → 'cebola amarela'; fallback to 'cebola branca'; avoid 'cebola roxa' unless specified\n"
-                    "- 'ground meat' or 'minced meat' → fallback to 'carne moída bovina' unless 'frango' or 'porco' is specified\n"
+                    "- 'ground meat' or 'minced meat' → fallback to 'carne moída bovina' unless 'frango' ou 'porco' is specified\n"
                     "- 'chicken thighs' → 'sobrecoxa de frango'\n"
                     "- 'chicken breast' → 'peito de frango' (not 'filé congelado')\n"
                     "- 'fish' (white) → fallback to 'tilápia'; if fatty/oily → 'salmão'\n"
@@ -512,12 +512,21 @@ def rappi_cart_search(
                     "- If recipe is 'Asian' → prioritize: 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'\n"
                     "- If recipe is 'Italian' → prioritize: 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
                     "- If recipe is a dessert using 'cream' → use 'nata' or 'creme de leite fresco', not 'caixinha'\n"
-                )},
-                {"role": "user", "content": (
-                    f"The ingredient '{translated}' was not found in a Brazilian supermarket. "
-                    "Suggest up to 5 realistic substitutions a shopper would search for instead."
+                    "- 'cacau em pó' → aceitar apenas 'cacau 100%', 'cacau alcalino'; rejeitar 'achocolatado', 'nescau', 'toddy'\n"
+                    "- 'farinha de trigo' → rejeitar produtos como 'farinha para empanar', 'farinha de rosca', 'mistura para bolo'\n"
+                    "- 'doce de leite' → aceitar apenas pastoso ou cremoso; rejeitar versões de corte ou em bala\n"
+                    "- 'chocolate meio amargo' → validar se a quantidade disponível cobre a receita; ajustar 'units_to_buy' conforme necessário\n"
+                    "- 'creme de leite' → aceitar 'creme de leite tradicional' ou 'zero lactose'; rejeitar 'chantilly', 'creme culinário', 'leite condensado'\n"
+                    "- 'talos de aipo', 'salsão' → aceitar apenas produtos frescos ou picados da planta; rejeitar temperos ou sais\n"
+                    "- 'tomilho' → aceitar apenas erva pura (seca ou fresca); rejeitar temperos compostos ou 'amaciante de carnes'\n"
+                    "- 'casca de parmesão' → aceitar apenas queijo em pedaço com casca; rejeitar parmesão ralado ou em pó\n"
+                    "- 'pancetta' → pode ser substituída por bacon em cubos ou fatias; nunca por presunto ou linguiça\n"
+                    "- 'carne moída de porco' → aceitar apenas produtos com 'suína' no nome; rejeitar bovina\n"
+                    "- 'beef stock' → aceitar apenas produtos que contenham 'carne' no rótulo; rejeitar 'legumes', 'vegetal', 'frango'\n"
+                    "- 'vinho branco' → default é vinho; pode considerar 'vinagre de vinho branco' apenas se usuário aceitar e for para desglace\n"
                 )}
             ]
+
 
             fallback_response = client.chat.completions.create(
                 model="gpt-4o",
@@ -609,10 +618,11 @@ def rappi_cart_search(
         # ▶️ Logging number of items per store
         for store, items in store_carts.items():
             logger.info(f"[rappi-cart] {store} has {len(items)} items")
+
         # ▶️ Fix #1 & #3: assign to local var, cache and return
         final_cart_result = {"carts_by_store": store_carts}
         cached_cart_result = final_cart_result
-        logger.info("[rappi-cart] Cart result cached and returned.")
+        logger.info("[rappi-cart] Cart result cached and returned (id=%s)", id(final_cart_result))
         return final_cart_result
 
     except Exception as e:
@@ -621,11 +631,23 @@ def rappi_cart_search(
 
         
 @app.get("/rappi-cart/view")
-def get_cached_cart():
-    # ▶️ Fix #2: simplify view endpoint
-    if not cached_cart_result:
+async def view_rappi_cart():
+    logger.info("[rappi-cart][view] called")
+    logger.info("[rappi-cart][view] cached_cart_result: %s (id=%s)",
+                "EXISTS" if cached_cart_result is not None else "NONE",
+                id(cached_cart_result) if cached_cart_result is not None else "N/A")
+    if cached_cart_result is None:
+        logger.warning("[rappi-cart][view] No cached cart available!")
         raise HTTPException(status_code=404, detail="No cart data available.")
+    # Validate structure
+    carts = cached_cart_result.get("carts_by_store")
+    if not carts or not isinstance(carts, dict):
+        logger.warning("[rappi-cart][view] Invalid cache structure: %s", type(cached_cart_result))
+        raise HTTPException(status_code=404, detail="Invalid cart data.")
+    total_items = sum(len(items) for items in carts.values())
+    logger.info("[rappi-cart][view] Returning cached cart: %d stores, %d total items", len(carts), total_items)
     return cached_cart_result
+
 
 @app.post("/rappi-cart/reset")
 def reset_rappi_cart():
@@ -633,12 +655,14 @@ def reset_rappi_cart():
     cached_cart_result = None
     cached_last_payload = None
     cached_user_id = None
+    logger.info("[rappi-cart] Cache reset")
     return {"status": "cleared"}
 
 @app.post("/rappi-cart/resend")
 def resend_rappi_cart():
     if not cached_last_payload:
         raise HTTPException(status_code=400, detail="No previous payload available")
+    # Re-run with last payload
     return rappi_cart_search(**cached_last_payload)
 
 @app.get("/recent-recipes")
