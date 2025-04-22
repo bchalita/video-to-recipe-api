@@ -591,12 +591,15 @@ def rappi_cart_search(
                                 total_quantity = units_needed * quantity_per_unit
 
                                 # ----- BEGIN: normalized needed display -----
+                                # Normalize unit display and estimate grams if possible
                                 if quantity_needed_val is not None:
+                                    estimated_needed_val = estimated_needed_val or estimate_mass(original, quantity_needed_unit, quantity_needed_val)
                                     needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
                                     if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"] and estimated_needed_val:
                                         needed_display += f" (~{int(estimated_needed_val)}g)"
                                 else:
-                                    needed_display = quantity_needed_raw
+                                    needed_display = quantity_needed_raw or ""
+
                     # ----- END: normalized needed display -----
                                 store_carts[store].append({
                                     "ingredient": original,
