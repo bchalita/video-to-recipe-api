@@ -448,6 +448,9 @@ def rappi_cart_search(
 
             base_term = translated.split()[0]
             search_terms = [translated]
+            # 🔍 Log the full search terms being used for this ingredient
+            logger.info(f"[rappi-cart][{original}] Search terms (base + fallback): {search_terms}")
+
 
             fallback_prompt = [
                 {"role": "system", "content": (
@@ -474,7 +477,7 @@ def rappi_cart_search(
                     "- 'minced meat' → fallback to 'carne moída bovina' unless 'porco' or 'frango' specified\n"
                     "- 'pork mince' → match only if 'suína' is present in product name\n"
                     "- 'vinegar' → if unspecified, match 'vinagre de álcool branco'; if in dressing, consider 'vinagre de vinho branco' or 'vinagre balsâmico'\n"
-                    "- 'steak' → fallback to 'bife de contrafilé', 'alcatra', or 'coxão mole'; avoid chicken or pork cuts\n"
+                    "- 'steak' → fallback must have 'bife', 'filet mignon', 'bife de contrafilé', 'alcatra', or 'coxão mole'; avoid chicken or pork cuts\n"
                     "- 'potato' → default to fresh 'batata inglesa'; reject pre-fried or frozen fries unless recipe specifies\n"
                     "- 'pepper' → only match 'pimenta do reino' (ground or whole); reject fresh peppers like 'pimenta cambuci'\n"
                     "- 'cacao powder' → only accept 'cacau 100%' or 'cacau alcalino'; reject 'achocolatado', 'Nescau', or similar\n"
@@ -528,6 +531,10 @@ def rappi_cart_search(
                     if json_data:
                         try:
                             fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
+                            # 🛒 Log first 5 product titles for this search term
+                            preview = list(iterate_fallback_products(fallback))[:5]
+                            logger.info(f"[rappi-cart][{original} @ {store} / term: {term}] First 5 fallback results: {[p.get('name') for p in preview]}")
+
                             for product in iterate_fallback_products(fallback):
                                 title = product.get("name", "").lower()
                                 price = float(str(product.get("price", "0")).replace(",", "."))
@@ -581,6 +588,10 @@ def rappi_cart_search(
                                     "total_cost": f"R$ {total_cost:.2f}",
                                     "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
                                 })
+                                # ✅ Selected product match
+                                logger.info(f"[rappi-cart][{original} @ {store}] → Selected match: {product.get('name')}")
+                                if not found:
+                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No match found. Terms tried: {search_terms}")
                                 found = True
                                 break
                         except Exception as e:
