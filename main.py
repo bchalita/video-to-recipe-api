@@ -351,153 +351,256 @@ cached_last_payload = None
 cached_user_id = None
 
 @app.post("/rappi-cart")
-async def rappi_cart_search(
+def rappi_cart_search(
     ingredients: List[str] = Body(..., embed=True),
     recipe_title: Optional[str] = Body(None),
     quantities: Optional[List[str]] = Body(None),
     user_id: Optional[str] = Body(None)
 ):
-    # helper: parse quantities like "1.5 kg", "2 tbsp" → (value_in_std, unit)
-    def parse_required_quantity(qty_str: str):
-        if not qty_str:
-            return None, ''
-        m = re.match(r"(\d+)(?:\.(\d+))?\s*(g|kg|ml|l|un|tbsp|tsp|cup|clove)?", qty_str.lower())
-        if not m:
-            return None, ''
-        whole, dec, unit = m.group(1), m.group(2) or '0', m.group(3) or 'un'
-        val = float(f"{whole}.{dec}")
-        factor = {'g':1,'kg':1000,'ml':1,'l':1000,'un':1,'tbsp':1,'tsp':1,'cup':1,'clove':1}.get(unit,1)
-        return val * factor, unit
-
-    # helper: extract JSON payload from __NEXT_DATA__ script
-    def extract_next_data_json(soup):
-        tag = soup.find('script', {'id':'__NEXT_DATA__','type':'application/json'})
-        if not tag:
-            return None
-        try:
-            return json.loads(tag.string)
-        except:
-            return None
-
-    # helper: yield all products from fallback data
-    def iterate_fallback_products(fallback):
-        for v in fallback.values():
-            if isinstance(v, dict) and 'products' in v:
-                for p in v['products']:
-                    yield p
-
-    # helper: estimate grams from unitized qty
-    def estimate_mass(name, unit, qty):
-        table = {
-            'un': {'onion':200,'garlic':5,'shallot':50},
-            'tbsp':{'butter':14,'olive oil':13,'sugar':12,'flour':8},
-            'tsp':{'salt':6,'pepper':2},
-            'cup':{'milk':240,'heavy cream':240}
-        }
-        return qty * table.get(unit,{}).get(name.lower(),1)
-
-    # 1) translate ingredients via GPT
-    prompt = [
-        {'role':'system','content':(
-            'You are a food translation expert. Translate each ingredient into common Brazilian supermarket terms. '
-            'Return only a JSON array.'
-        )},
-        {'role':'user','content':f'Translate to Portuguese: {json.dumps(ingredients)}'}
-    ]
-    resp = client.chat.completions.create(model='gpt-4o', messages=prompt, max_tokens=300)
-    translated = json.loads(clean_gpt_json_response(resp.choices[0].message.content))
-
-    # 2) fallback rules
-    fallback_rules = (
-        "You are a Brazilian Portuguese food domain expert. Return a JSON list of up to 5 alternatives (no text)."
-        "Convert broth→caldo de X; mushrooms→cogumelo paris,portobello,shitake,ostra;"
-        "garlic→fresh only; onion→cebola amarela,cebola branca; herbs pure; thyme,salsinha,manjericão fresco;"
-        "cream→creme de leite fresco; cream cheese→cream cheese or requeijão cremoso; doce de leite→soft only;"
-        "parmesan rind→solid rind; pancetta→bacon em cubos|fatiado; minced meat→carne moída bovina; pork mince→suína;"
-        "vinegar→vinagre de álcool branco; steak→bife de contrafilé|alcatra|coxão mole; potato→batata inglesa;"
-        "pepper→pimenta do reino; flour→farinha de trigo; olive oil→azeite de oliva extra virgem;"
-        "pasta→match or massa tipo espaguete; shrimp→camarão cinza|rosa; cuisine context: Asian shoyu,gengibre, óleo de gergelim; Italian parmesão,muçarela,azeite,manjericão fresco"
-    )
-    def get_fallback(term):
-        msgs = [
-            {'role':'system','content':fallback_rules},
-            {'role':'user','content':f"Fallback for '{term}' in '{recipe_title or ''}'"}
-        ]
-        r = client.chat.completions.create(model='gpt-4o', messages=msgs, temperature=0, max_tokens=100)
-        try:
-            return json.loads(clean_gpt_json_response(r.choices[0].message.content))
-        except:
-            return []
-
-    # 3) build carts
-    headers = {'User-Agent':'Mozilla/5.0'}
-    stores = {
-        'Zona Sul':'https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s',
-        'Pão de Açúcar':'https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s'
+    global cached_cart_result, cached_last_payload, cached_user_id
+    cached_last_payload = {
+        "ingredients": ingredients,
+        "recipe_title": recipe_title,
+        "quantities": quantities,
+        "user_id": user_id
     }
-    carts = {s:[] for s in stores}
+    cached_user_id = user_id
 
-    for i, term0 in enumerate(translated):
-        orig = ingredients[i]
-        if orig.lower() in ['water','água']:
-            continue
-        qty_raw = (quantities or [])[i] if quantities and i < len(quantities) else ''
-        val, unit = parse_required_quantity(qty_raw)
-        est = estimate_mass(orig, unit, val) if val else None
+    try:
+        ingredient_override_map = {
+            "tuna": "lombo de atum"
+        }
 
-        terms = [term0] + [alt for alt in get_fallback(term0) if alt.lower()!=term0.lower()]
+        if recipe_title and "tartare" in recipe_title.lower():
+            ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
 
-        for store, url in stores.items():
-            done = False
-            for t in terms:
-                if done: break
-                r = requests.get(url, params={'term':t}, headers=headers, timeout=10)
-                soup = BeautifulSoup(r.text,'html.parser')
-                data = extract_next_data_json(soup)
-                if not data: continue
-                fb = data.get('props',{}).get('pageProps',{}).get('fallback',{})
-                for p in iterate_fallback_products(fb):
-                    name = p.get('name','')
-                    title = name.lower()
-                    if not all(w in title for w in t.lower().split()):
-                        continue
-                    price = float(str(p.get('price',0)).replace(',','.'))
-                    utype = p.get('unitType','')
-                    qpu = p.get('quantity',1)
+        prompt = [
+            {"role": "system", "content": (
+                "You are a food translation expert. Translate each ingredient into the common name as used in Brazilian supermarkets. "
+                "Use product terminology that aligns with shopping categories (e.g., 'pasta' should become 'macarrão', not 'massa'). "
+                "Return only a JSON array."
+            )},
+            {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
+        ]
 
-                    if est and utype in ['kg','g','ml','l']:
-                        units = max(1, int(est//qpu + 0.999))
-                    else:
-                        units = 1
+        translation_response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=prompt,
+            max_tokens=300
+        )
 
-                    total_q = units * qpu
-                    total_c = units * price
-                    disp_qty = format_unit_display(val, unit) if val is not None else qty_raw
+        translated_text = translation_response.choices[0].message.content.strip()
+        translated_list = json.loads(clean_gpt_json_response(translated_text))
 
-                    carts[store].append({
-                        'ingredient':orig,
-                        'translated':term0,
-                        'product_name':name,
-                        'price':f"R$ {price:.2f}",
-                        'image_url':p.get('image'),
-                        'quantity_needed':qty_raw,
-                        'quantity_needed_display':disp_qty,
-                        'quantity_unit':utype,
-                        'quantity_per_unit':qpu,
-                        'display_quantity_per_unit':format_unit_display(qpu,utype),
-                        'units_to_buy':units,
-                        'total_quantity_added':total_q,
-                        'total_cost':f"R$ {total_c:.2f}",
-                        'excess_quantity':(total_q-est) if est else None
-                    })
-                    done = True
-                    break
-                if done: break
+        logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
-    global cached_cart_result
-    cached_cart_result = {'carts_by_store':carts}
-    logger.info(f"[rappi-cart] Cached cart id={id(cached_cart_result)}")
-    return cached_cart_result
+        headers = {"User-Agent": "Mozilla/5.0"}
+        store_urls = {
+            "Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
+            "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s"
+        }
+        store_carts = {store: [] for store in store_urls.keys()}
+
+        def parse_required_quantity(qty_str):
+            if not qty_str:
+                return None, ""
+            match = re.match(r"(\d+)(\.?\d*)\\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
+            if match:
+                value = float(match.group(1) + match.group(2))
+                unit = match.group(3) or "un"
+                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1, "tbsp": 1, "tsp": 1, "cup": 1, "clove": 1}.get(unit, 1)
+                std_val = value * factor
+                return std_val, unit
+            return None, ""
+
+        def extract_next_data_json(soup):
+            script = soup.find("script", {"id": "__NEXT_DATA__", "type": "application/json"})
+            if not script:
+                logger.warning("[rappi-cart] Could not find __NEXT_DATA__ script tag")
+                return None
+            try:
+                return json.loads(script.string)
+            except Exception as e:
+                logger.warning(f"[rappi-cart] Failed to parse NEXT_DATA: {e}")
+                return None
+
+        def iterate_fallback_products(fallback):
+            for key, val in fallback.items():
+                if isinstance(val, dict) and "products" in val:
+                    yield from val["products"]
+
+        def estimate_mass(ingredient_name, unit, value):
+            key = ingredient_name.lower()
+            table = {
+                "un": {"onion": 200, "garlic": 5, "egg": 50, "lime": 65, "shallot": 50, "nori": 5},
+                "tbsp": {"butter": 14, "olive oil": 13, "avocado oil": 13, "sugar": 12, "flour": 8},
+                "tsp": {"salt": 6, "pepper": 2, "sugar": 4, "mirin": 5, "soy sauce": 5, "rice wine vinegar": 5},
+                "clove": {"garlic": 5},
+                "cup": {"milk": 240, "heavy cream": 240, "water": 240, "cherry tomatoes": 150}
+            }.get(unit, {})
+            return value * table.get(key, 1)
+
+        seen_items = set()
+
+        for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
+            if original.lower() in ["water", "água"]:
+                continue
+
+            base_term = translated.split()[0]
+            search_terms = [translated]
+
+            fallback_prompt = [
+                {"role": "system", "content": (
+                    "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
+                    "Return only a JSON list of up to 5 product name alternatives in Brazilian Portuguese. No extra explanation, no formatting. If no valid match, return [].\n\n"
+                    "Fallback rules:\n"
+                    "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
+                    "- Stock/broth → convert to 'caldo de X' (e.g. beef = 'caldo de carne', chicken = 'caldo de galinha')\n"
+                    "- 'mushroom' → fallback order: 'cogumelo paris', 'portobello', 'shitake', 'ostra'; never use 'champignon' unless explicitly specified\n"
+                    "- Garlic → exclude 'alho poró', dried, or powdered; must be fresh garlic cloves\n"
+                    "- Onion → fallback to 'cebola amarela', then 'cebola branca'; only use 'cebola roxa' if explicitly specified or if recipe is cold (e.g. salad)\n"
+                    "- Herbs must be pure: reject 'cheiro verde', 'ervas finas', or anything with mixed spices\n"
+                    "- 'thyme' → only match pure thyme (fresh or dried); reject compound mixes like 'tempero para carne'\n"
+                    "- 'parsley' → match 'salsinha' only; avoid blends\n"
+                    "- 'basil' → 'manjericão fresco'; reject dry or blended versions unless recipe is dry-rub\n"
+                    "- 'cream' in sauces or pasta → match 'creme de leite fresco'; avoid boxed or sweetened versions\n"
+                    "- 'sour cream' → no direct match in Brazil; default to 'nata' or 'creme de leite com limão'\n"
+                    "- 'heavy cream' or 'double cream' → 'creme de leite fresco'; reject canned or light cream\n"
+                    "- 'cream cheese' → only accept labeled 'cream cheese'; fallback to 'requeijão cremoso' if context is for spreading\n"
+                    "- 'chocolate meio amargo' → validate if product weight meets recipe quantity; adjust `units_to_buy`\n"
+                    "- 'doce de leite' → only accept soft/paste versions; reject candy-style or cuttable ones\n"
+                    "- 'parmesan rind' → only accept solid pieces of cheese with rind; reject grated or powder\n"
+                    "- 'pancetta' → can fallback to 'bacon em cubos' or 'bacon fatiado'; never to presunto or linguiça\n"
+                    "- 'minced meat' → fallback to 'carne moída bovina' unless 'porco' or 'frango' specified\n"
+                    "- 'pork mince' → match only if 'suína' is present in product name\n"
+                    "- 'vinegar' → if unspecified, match 'vinagre de álcool branco'; if in dressing, consider 'vinagre de vinho branco' or 'vinagre balsâmico'\n"
+                    "- 'steak' → fallback to 'bife de contrafilé', 'alcatra', or 'coxão mole'; avoid chicken or pork cuts\n"
+                    "- 'potato' → default to fresh 'batata inglesa'; reject pre-fried or frozen fries unless recipe specifies\n"
+                    "- 'pepper' → only match 'pimenta do reino' (ground or whole); reject fresh peppers like 'pimenta cambuci'\n"
+                    "- 'cacao powder' → only accept 'cacau 100%' or 'cacau alcalino'; reject 'achocolatado', 'Nescau', or similar\n"
+                    "- 'flour' → match 'farinha de trigo'; reject 'farinha para empanar', 'farinha de rosca', or cake mixes\n"
+                    "- 'olive oil' → only accept 'azeite de oliva extra virgem'\n"
+                    "- 'pasta' → match by format ('espaguete', 'penne', 'fusilli'); fallback to 'massa tipo espaguete'\n"
+                    "- 'boursin' or specialty cheese → validate against inclusion of herb blends; reject if 'ervas finas' or 'temperado' is included unless explicitly required\n"
+                    "- 'shrimp' → accept 'camarão cinza' or 'camarão rosa', peeled preferred; reject breaded or precooked unless recipe specifies\n"
+                    "- Adjust product selection based on cuisine:\n"
+                    "  * Asian → prioritize 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'\n"
+                    "  * Italian → prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
+                )}
+            ]
+
+
+
+            fallback_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=fallback_prompt,
+                max_tokens=100
+            )
+            fallback_text = fallback_response.choices[0].message.content.strip()
+            logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
+            
+            try:
+                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+                if not isinstance(fallback_list, list):
+                    raise ValueError("Fallback is not a JSON list.")
+            except Exception as e:
+                logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
+                fallback_list = []
+            search_terms.extend(fallback_list)
+
+            if base_term.lower() not in [term.lower() for term in search_terms]:
+                search_terms.append(base_term)
+
+            quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
+            quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
+            estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
+
+            for store, url in store_urls.items():
+                found = False
+                for term in search_terms:
+                    if found:
+                        break
+                    response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    json_data = extract_next_data_json(soup)
+
+                    if json_data:
+                        try:
+                            fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
+                            for product in iterate_fallback_products(fallback):
+                                title = product.get("name", "").lower()
+                                price = float(str(product.get("price", "0")).replace(",", "."))
+                                unit_type = product.get("unitType", "")
+                                quantity_per_unit = product.get("quantity", 1)
+
+                                if not any(word in title for word in term.lower().split()):
+                                    continue
+
+                                product_name = product.get("name", "").strip().lower()
+                                key = (store, translated, product_name)
+                                if key in seen_items:
+                                    continue
+                                seen_items.add(key)
+
+                                image_raw = product.get("image")
+                                image_url = image_raw if image_raw and image_raw.startswith("http") else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
+
+                                if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
+                                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                                else:
+                                    units_needed = 1
+
+                                total_cost = units_needed * price
+                                total_quantity = units_needed * quantity_per_unit
+
+                                # ----- BEGIN: normalized needed display -----
+                                # Normalize unit display and estimate grams if possible
+                                if quantity_needed_val is not None:
+                                    estimated_needed_val = estimated_needed_val or estimate_mass(original, quantity_needed_unit, quantity_needed_val)
+                                    needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
+                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"] and estimated_needed_val:
+                                        needed_display += f" (~{int(estimated_needed_val)}g)"
+                                else:
+                                    needed_display = quantity_needed_raw or ""
+
+                    # ----- END: normalized needed display -----
+                                store_carts[store].append({
+                                    "ingredient": original,
+                                    "translated": translated,
+                                    "product_name": product.get("name"),
+                                    "price": f"R$ {price:.2f}",
+                                    "image_url": image_url,
+                                    "quantity_needed": quantity_needed_raw,
+                                    "quantity_needed_display": needed_display,
+                                    "quantity_unit": unit_type,
+                                    "quantity_per_unit": quantity_per_unit,
+                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
+                                    "units_to_buy": units_needed,
+                                    "total_quantity_added": total_quantity,
+                                    "total_cost": f"R$ {total_cost:.2f}",
+                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                                })
+                                found = True
+                                break
+                        except Exception as e:
+                            logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
+        
+        for store, items in store_carts.items():
+            logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
+
+        # ▶️ Logging number of items per store
+        for store, items in store_carts.items():
+            logger.info(f"[rappi-cart] {store} has {len(items)} items")
+
+        # ▶️ Fix #1 & #3: assign to local var, cache and return
+        final_cart_result = {"carts_by_store": store_carts}
+        cached_cart_result = final_cart_result
+        logger.info("[rappi-cart] Cart result cached and returned (id=%s)", id(final_cart_result))
+        return final_cart_result
+
+    except Exception as e:
+        logger.error(f"[rappi-cart] Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
         
 @app.get("/rappi-cart/view")
