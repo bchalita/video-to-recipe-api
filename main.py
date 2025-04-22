@@ -452,80 +452,43 @@ def rappi_cart_search(
             fallback_prompt = [
                 {"role": "system", "content": (
                     "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
-                    "Return only a JSON list of maximum 5 alternatives. No bullet points, no numbers, no extra text. Return [] if nothing valid.\n"
-                    "Fallback logic:\n"
-                    "- 'stock' or 'broth' → 'caldo de X' (e.g., mushroom = 'caldo de cogumelo', chicken = 'caldo de galinha')\n"
-                    "- Mushrooms → 'cogumelo paris', 'portobello', 'shitake', 'ostra' in this order\n"
-                    "- Never use 'champignon' unless explicitly specified\n"
-                    "- Herbs must be pure: reject any blend like 'cheiro verde', 'ervas finas', 'tempero completo'\n"
-                    "- Broccolini → 'brócolis ramoso' or 'brócolis ninja' (prefer fresh)\n"
-                    "- Plain flour → 'farinha de trigo'\n"
-                    "- Butter → 'manteiga' (never 'margarina')\n"
-                    "- Oil → 'óleo vegetal' or 'óleo de soja'\n"
-                    "- Vinegar → must exclude flavored options unless explicitly mentioned\n"
-                    "- Avoid matching 'arroz' if the actual item is 'macarrão de arroz'\n"
-                    "- Garlic → must exclude 'alho poró', 'alho em pó', or any dried forms\n"
-                    "- Cornstarch → 'amido de milho'\n"
-                    "- 'salt and pepper' → reject anything that includes 'ervas finas' or seasoning blends\n"
-                    "- 'soy sauce', 'oyster sauce', etc. → must contain the core term ('soja', 'ostra', etc.)\n"
-                    "- Convert '2 tbsp' or similar units to grams for practical lookup\n"
-                    "- 'filet mignon' → assume beef unless 'suíno' is explicitly stated\n"
-                    "- 'cream' used in pasta or sauces → 'creme de leite fresco'\n"
-                    "- 'onions' → 'cebola amarela'; fallback to 'cebola branca'; avoid 'cebola roxa' unless specified\n"
-                    "- 'ground meat' or 'minced meat' → fallback to 'carne moída bovina' unless 'frango' ou 'porco' is specified\n"
-                    "- 'chicken thighs' → 'sobrecoxa de frango'\n"
-                    "- 'chicken breast' → 'peito de frango' (not 'filé congelado')\n"
-                    "- 'fish' (white) → fallback to 'tilápia'; if fatty/oily → 'salmão'\n"
-                    "- 'shrimp' → 'camarão cinza' or 'camarão rosa', raw preferred\n"
-                    "- 'pork chops' → 'bisteca suína'\n"
-                    "- 'steak' → 'bife de contrafilé', 'alcatra' or 'coxão mole' depending on context\n"
-                    "- 'sour cream' → 'creme de leite com limão' or 'nata' (no direct BR equivalent)\n"
-                    "- 'milk' → 'leite integral'\n"
-                    "- 'parmesan cheese' → 'queijo parmesão ralado'\n"
-                    "- 'mozzarella' → 'muçarela' (watch spelling in search)\n"
-                    "- 'cream cheese' → 'cream cheese'; fallback to 'requeijão cremoso' if for spreading\n"
-                    "- 'green onion' or 'scallion' → 'cebolinha'\n"
-                    "- 'shallot' → fallback to 'cebola roxa'\n"
-                    "- 'bell pepper' → 'pimentão vermelho', fallback to 'amarelo' or 'verde' per recipe color hint\n"
-                    "- 'zucchini' → 'abobrinha italiana'\n"
-                    "- 'squash' (savory) → 'abóbora cabotiá'\n"
-                    "- 'eggplant' → 'berinjela'\n"
-                    "- 'rice' (white) → 'arroz branco tipo 1'; brown → 'arroz integral'; basmati/jasmine → try direct, fallback to 'agulhinha'\n"
-                    "- 'pasta' → match by format: 'espaguete', 'penne', 'fusilli'; if unclear, default to 'massa tipo espaguete'\n"
-                    "- 'olive oil' → 'azeite de oliva extra virgem'\n"
-                    "- 'vegetable oil' → 'óleo de soja' or 'óleo de girassol'\n"
-                    "- 'vinegar' (unspecified) → 'vinagre de álcool branco'; for dressings → 'vinagre de vinho branco' or 'balsâmico'\n"
-                    "- 'honey' → 'mel de abelha' (avoid flavored versions)\n"
-                    "- 'mustard' → 'mostarda amarela'\n"
-                    "- 'ketchup' → only match labeled 'ketchup', not 'molho de tomate'\n"
-                    "- 'parsley' → 'salsinha'\n"
-                    "- 'cilantro' → 'coentro'\n"
-                    "- 'thyme' → 'tomilho fresco'\n"
-                    "- 'basil' → 'manjericão fresco'\n"
-                    "- 'rosemary' → 'alecrim'\n"
-                    "- 'baking powder' → 'fermento químico em pó'\n"
-                    "- 'baking soda' → 'bicarbonato de sódio'\n"
-                    "- 'sugar' → 'açúcar refinado'; if 'brown sugar' → 'açúcar mascavo'; 'demerara' only if stated\n"
-                    "- 'vanilla extract' → 'essência de baunilha'\n"
-                    "- 'dark chocolate' → 'chocolate amargo 70%'; 'semi-sweet' → 'chocolate meio amargo'; 'milk' → 'chocolate ao leite'\n"
-                    "- If 'sautéed' is mentioned → prefer fresh vegetables over frozen\n"
-                    "- If recipe is 'Asian' → prioritize: 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'\n"
-                    "- If recipe is 'Italian' → prioritize: 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
-                    "- If recipe is a dessert using 'cream' → use 'nata' or 'creme de leite fresco', not 'caixinha'\n"
-                    "- 'cacau em pó' → aceitar apenas 'cacau 100%', 'cacau alcalino'; rejeitar 'achocolatado', 'nescau', 'toddy'\n"
-                    "- 'farinha de trigo' → rejeitar produtos como 'farinha para empanar', 'farinha de rosca', 'mistura para bolo'\n"
-                    "- 'doce de leite' → aceitar apenas pastoso ou cremoso; rejeitar versões de corte ou em bala\n"
-                    "- 'chocolate meio amargo' → validar se a quantidade disponível cobre a receita; ajustar 'units_to_buy' conforme necessário\n"
-                    "- 'creme de leite' → aceitar 'creme de leite tradicional' ou 'zero lactose'; rejeitar 'chantilly', 'creme culinário', 'leite condensado'\n"
-                    "- 'talos de aipo', 'salsão' → aceitar apenas produtos frescos ou picados da planta; rejeitar temperos ou sais\n"
-                    "- 'tomilho' → aceitar apenas erva pura (seca ou fresca); rejeitar temperos compostos ou 'amaciante de carnes'\n"
-                    "- 'casca de parmesão' → aceitar apenas queijo em pedaço com casca; rejeitar parmesão ralado ou em pó\n"
-                    "- 'pancetta' → pode ser substituída por bacon em cubos ou fatias; nunca por presunto ou linguiça\n"
-                    "- 'carne moída de porco' → aceitar apenas produtos com 'suína' no nome; rejeitar bovina\n"
-                    "- 'beef stock' → aceitar apenas produtos que contenham 'carne' no rótulo; rejeitar 'legumes', 'vegetal', 'frango'\n"
-                    "- 'vinho branco' → default é vinho; pode considerar 'vinagre de vinho branco' apenas se usuário aceitar e for para desglace\n"
+                    "Return only a JSON list of up to 5 product name alternatives in Brazilian Portuguese. No extra explanation, no formatting. If no valid match, return [].\n\n"
+                    "Fallback rules:\n"
+                    "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
+                    "- Stock/broth → convert to 'caldo de X' (e.g. beef = 'caldo de carne', chicken = 'caldo de galinha')\n"
+                    "- 'mushroom' → fallback order: 'cogumelo paris', 'portobello', 'shitake', 'ostra'; never use 'champignon' unless explicitly specified\n"
+                    "- Garlic → exclude 'alho poró', dried, or powdered; must be fresh garlic cloves\n"
+                    "- Onion → fallback to 'cebola amarela', then 'cebola branca'; only use 'cebola roxa' if explicitly specified or if recipe is cold (e.g. salad)\n"
+                    "- Herbs must be pure: reject 'cheiro verde', 'ervas finas', or anything with mixed spices\n"
+                    "- 'thyme' → only match pure thyme (fresh or dried); reject compound mixes like 'tempero para carne'\n"
+                    "- 'parsley' → match 'salsinha' only; avoid blends\n"
+                    "- 'basil' → 'manjericão fresco'; reject dry or blended versions unless recipe is dry-rub\n"
+                    "- 'cream' in sauces or pasta → match 'creme de leite fresco'; avoid boxed or sweetened versions\n"
+                    "- 'sour cream' → no direct match in Brazil; default to 'nata' or 'creme de leite com limão'\n"
+                    "- 'heavy cream' or 'double cream' → 'creme de leite fresco'; reject canned or light cream\n"
+                    "- 'cream cheese' → only accept labeled 'cream cheese'; fallback to 'requeijão cremoso' if context is for spreading\n"
+                    "- 'chocolate meio amargo' → validate if product weight meets recipe quantity; adjust `units_to_buy`\n"
+                    "- 'doce de leite' → only accept soft/paste versions; reject candy-style or cuttable ones\n"
+                    "- 'parmesan rind' → only accept solid pieces of cheese with rind; reject grated or powder\n"
+                    "- 'pancetta' → can fallback to 'bacon em cubos' or 'bacon fatiado'; never to presunto or linguiça\n"
+                    "- 'minced meat' → fallback to 'carne moída bovina' unless 'porco' or 'frango' specified\n"
+                    "- 'pork mince' → match only if 'suína' is present in product name\n"
+                    "- 'vinegar' → if unspecified, match 'vinagre de álcool branco'; if in dressing, consider 'vinagre de vinho branco' or 'vinagre balsâmico'\n"
+                    "- 'steak' → fallback to 'bife de contrafilé', 'alcatra', or 'coxão mole'; avoid chicken or pork cuts\n"
+                    "- 'potato' → default to fresh 'batata inglesa'; reject pre-fried or frozen fries unless recipe specifies\n"
+                    "- 'pepper' → only match 'pimenta do reino' (ground or whole); reject fresh peppers like 'pimenta cambuci'\n"
+                    "- 'cacao powder' → only accept 'cacau 100%' or 'cacau alcalino'; reject 'achocolatado', 'Nescau', or similar\n"
+                    "- 'flour' → match 'farinha de trigo'; reject 'farinha para empanar', 'farinha de rosca', or cake mixes\n"
+                    "- 'olive oil' → only accept 'azeite de oliva extra virgem'\n"
+                    "- 'pasta' → match by format ('espaguete', 'penne', 'fusilli'); fallback to 'massa tipo espaguete'\n"
+                    "- 'boursin' or specialty cheese → validate against inclusion of herb blends; reject if 'ervas finas' or 'temperado' is included unless explicitly required\n"
+                    "- 'shrimp' → accept 'camarão cinza' or 'camarão rosa', peeled preferred; reject breaded or precooked unless recipe specifies\n"
+                    "- Adjust product selection based on cuisine:\n"
+                    "  * Asian → prioritize 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'\n"
+                    "  * Italian → prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
                 )}
             ]
+
 
 
             fallback_response = client.chat.completions.create(
@@ -880,17 +843,25 @@ async def upload_video(
             }
 
             if user_id:
-                print(f"[DEBUG] Looking for user with UUID: {user_id}")  # <<< ADD HERE
+                print(f"[DEBUG] Looking for user with UUID: {user_id}")
 
                 headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
                 params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
                 user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
                 user_response = requests.get(user_url, headers=headers, params=params)
-                print("[DEBUG] Airtable user lookup result:", user_response.json())  # <<< ADD HERE
 
-                if user_response.status_code == 200 and user_response.json().get("records"):
-                    airtable_record_id = user_response.json()["records"][0]["id"]
-                    payload["fields"]["User ID"] = [airtable_record_id]
+                try:
+                    response_json = user_response.json()
+                    print("[DEBUG] Airtable user lookup result:", json.dumps(response_json, indent=2))
+                except Exception as e:
+                    print(f"[ERROR] Failed to parse user response JSON: {str(e)}")
+
+                if user_response.status_code == 200 and response_json.get("records"):
+                    airtable_record_id = response_json["records"][0]["id"]
+                    payload["fields"]["User ID"] = [airtable_record_id]  # ✅ Properly include linked User ID
+                    print(f"[DEBUG] Found Airtable user record ID: {airtable_record_id}")
+                else:
+                    print("[DEBUG] No matching user found in Airtable or bad response.")
 
             url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
             headers = {
