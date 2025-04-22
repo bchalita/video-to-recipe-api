@@ -404,7 +404,7 @@ def get_fallback_list(term: str) -> List[str]:
     except:
         return []
             
-@api.post("/rappi-cart")
+@app.post("/rappi-cart")
 async def rappi_cart_search(
     ingredients: List[str] = Body(..., embed=True),
     recipe_title: Optional[str] = Body(None),
