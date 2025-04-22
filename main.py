@@ -541,8 +541,14 @@ def rappi_cart_search(
                                 unit_type = product.get("unitType", "")
                                 quantity_per_unit = product.get("quantity", 1)
 
-                                if not any(word in title for word in term.lower().split()):
-                                    continue
+                                term_words = term.lower().split()
+                                title = product.get("name", "").lower()
+                                
+                                # Primary: all words must match (strict)
+                                if not all(word in title for word in term_words):
+                                    # Secondary: noun-only relaxed match
+                                    if not term_words or term_words[0] not in title:
+                                        continue
 
                                 product_name = product.get("name", "").strip().lower()
                                 key = (store, translated, product_name)
