@@ -573,12 +573,8 @@ def rappi_cart_search(
                                 "excess_quantity": (total_qty - est_needed) if est_needed else None
                             })
                             break
-            
-            # Final logging & return unchanged
-
-
-                        except Exception as e:
-                            logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
+                        if store_carts[store] and store_carts[store][-1]["translated"] == translated:
+                            break
         
         for store, items in store_carts.items():
             logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
