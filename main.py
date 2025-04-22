@@ -528,8 +528,8 @@ def rappi_cart_search(
                         break
                     if "zonasul.com.br" in url:
                         try:
-                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔍 Searching: {term}")
                             search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
                             response = requests.get(search_url, headers=headers, timeout=10)
                             soup = BeautifulSoup(response.text, "html.parser")
                     
