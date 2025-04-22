@@ -489,6 +489,7 @@ def rappi_cart_search(
                 )}
             ]
 
+            fallback_prompt.append({"role": "user", "content": f"Term: '{translated}'"})
 
 
             fallback_response = client.chat.completions.create(
