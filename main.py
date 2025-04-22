@@ -397,8 +397,10 @@ def rappi_cart_search(
         headers = {"User-Agent": "Mozilla/5.0"}
         store_urls = {
             "Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
-            "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s"
+            "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
+            "Zona Sul Direct": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
         }
+
         store_carts = {store: [] for store in store_urls.keys()}
 
         def parse_required_quantity(qty_str):
@@ -524,6 +526,88 @@ def rappi_cart_search(
                 for term in search_terms:
                     if found:
                         break
+                    if "zonasul.com.br" in url:
+                        try:
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔍 Searching: {term}")
+                            search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+                            response = requests.get(search_url, headers=headers, timeout=10)
+                            soup = BeautifulSoup(response.text, "html.parser")
+                    
+                            containers = soup.select("div.vtex-product-summary-2-x-container")
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(containers)} containers")
+                    
+                            for container in containers[:5]:
+                                name_elem = container.select_one("span.vtex-product-summary-2-x-productBrand")
+                                image_elem = container.select_one("img.vtex-product-summary-2-x-imageNormal")
+                                price_integer = container.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
+                                price_fraction = container.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
+                    
+                                if not name_elem or not price_integer:
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⛔️ Skipping: incomplete product block")
+                                    continue
+                    
+                                product_name = name_elem.get_text(strip=True)
+                                title = product_name.lower()
+                    
+                                if not any(word in title for word in term.lower().split()):
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Title mismatch: {title}")
+                                    continue
+                    
+                                price = float(f"{price_integer.text}.{price_fraction.text if price_fraction else '00'}")
+                                image_url = image_elem.get("src") if image_elem else None
+                    
+                                # Extract quantity from name: 500g, 1,2 kg, Unidade
+                                quantity_match = re.search(r"(\d+(?:[.,]\d+)?)(\s?)(kg|g|unidade|un)", product_name.lower())
+                                if quantity_match:
+                                    val = float(quantity_match.group(1).replace(",", "."))
+                                    unit = quantity_match.group(3).lower()
+                                    factor = {"kg": 1000, "g": 1, "un": 1, "unidade": 1}.get(unit, 1)
+                                    quantity_per_unit = int(val * factor)
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 📦 Parsed quantity: {quantity_per_unit}g from '{quantity_match.group(0)}'")
+                                else:
+                                    quantity_per_unit = 500  # fallback
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No quantity match, using default: {quantity_per_unit}g")
+                    
+                                units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999)) if estimated_needed_val else 1
+                                total_cost = units_needed * price
+                                total_quantity = units_needed * quantity_per_unit
+                    
+                                needed_display = (
+                                    format_unit_display(quantity_needed_val, quantity_needed_unit)
+                                    + f" (~{int(estimated_needed_val)}g)"
+                                    if quantity_needed_val else quantity_needed_raw or ""
+                                )
+                    
+                                key = (store, translated, product_name.lower())
+                                if key in seen_items:
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔁 Already seen: {product_name}")
+                                    continue
+                                seen_items.add(key)
+                    
+                                store_carts[store].append({
+                                    "ingredient": original,
+                                    "translated": translated,
+                                    "product_name": product_name,
+                                    "price": f"R$ {price:.2f}",
+                                    "image_url": image_url,
+                                    "quantity_needed": quantity_needed_raw,
+                                    "quantity_needed_display": needed_display,
+                                    "quantity_unit": "",
+                                    "quantity_per_unit": quantity_per_unit,
+                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+                                    "units_to_buy": units_needed,
+                                    "total_quantity_added": total_quantity,
+                                    "total_cost": f"R$ {total_cost:.2f}",
+                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                                })
+                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ✅ Added: {product_name}")
+                                found = True
+                                break
+                    
+                        except Exception as e:
+                            logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
+                        continue
+
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
                     json_data = extract_next_data_json(soup)
