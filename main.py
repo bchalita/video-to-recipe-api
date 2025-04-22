@@ -449,6 +449,7 @@ def rappi_cart_search(
             base_term = translated.split()[0]
             search_terms = [translated]
 
+            # Fallback prompt & helper
             fallback_prompt = [
                 {"role": "system", "content": (
                     "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
@@ -488,100 +489,94 @@ def rappi_cart_search(
                     "  * Italian → prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
                 )}
             ]
-
-
-
-            fallback_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=fallback_prompt,
-                max_tokens=100
-            )
-            fallback_text = fallback_response.choices[0].message.content.strip()
-            logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
             
-            try:
-                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
-                if not isinstance(fallback_list, list):
-                    raise ValueError("Fallback is not a JSON list.")
-            except Exception as e:
-                logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
-                fallback_list = []
-            search_terms.extend(fallback_list)
-
-            if base_term.lower() not in [term.lower() for term in search_terms]:
-                search_terms.append(base_term)
-
-            quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
-            quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
-            estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
-
+            def get_fallback_list(term: str) -> list:
+                messages = fallback_prompt + [{"role": "user", "content": f"Term: '{term}'"}]
+                resp = client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=messages,
+                    temperature=0,
+                    max_tokens=100
+                )
+                text = resp.choices[0].message.content.strip()
+                try:
+                    return json.loads(clean_gpt_json_response(text))
+                except:
+                    return []
+            
+            # Build search terms per ingredient
+            translated_list = translate_ingredients(ingredients)
+            quantities     = extract_quantities(ingredients)
+            all_search_terms = []
+            for original, translated in zip(ingredients, translated_list):
+                if original.lower() in ["water", "água"]:
+                    all_search_terms.append([translated])
+                    continue
+                fallbacks = get_fallback_list(translated)
+                terms = [translated] + [t for t in fallbacks if t.lower() != translated.lower()]
+                all_search_terms.append(terms)
+            
+            # Loop stores using dynamic search_terms
             for store, url in store_urls.items():
-                found = False
-                for term in search_terms:
-                    if found:
-                        break
-                    response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    json_data = extract_next_data_json(soup)
+                for idx, terms in enumerate(all_search_terms):
+                    original = ingredients[idx]
+                    translated = translated_list[idx]
+                    quantity_needed_raw = quantities[idx] if idx < len(quantities) else ""
+                    q_val, q_unit = parse_required_quantity(quantity_needed_raw)
+                    est_needed = estimate_mass(original, q_unit, q_val) if q_val else None
+                    seen_items = set()
+            
+                    for term in terms:
+                        response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                        soup = BeautifulSoup(response.text, "html.parser")
+                        data = extract_next_data_json(soup)
+                        if not data:
+                            continue
+            
+                        fallback = data.get("props", {}).get("pageProps", {}).get("fallback", {})
+                        for product in iterate_fallback_products(fallback):
+                            title = product.get("name", "").lower()
+                            if not any(w in title for w in term.lower().split()):
+                                continue
+                            key = (store, translated, title)
+                            if key in seen_items:
+                                continue
+                            seen_items.add(key)
+                            price = float(str(product.get("price",0)).replace(",","."))
+                            unit_type = product.get("unitType", "")
+                            qty_per = product.get("quantity", 1)
+                            units = max(1, int((est_needed or qty_per) / qty_per)) if unit_type in ["kg","g","ml","l"] else 1
+                            total_cost = units * price
+                            total_qty = units * qty_per
+                            # display normalization
+                            if q_val is not None:
+                                needed_display = format_unit_display(q_val, q_unit)
+                                if q_unit in ["un","tbsp","tsp","cup","clove"] and est_needed:
+                                    needed_display += f" (~{int(est_needed)}g)"
+                            else:
+                                needed_display = quantity_needed_raw
+            
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": translated,
+                                "product_name": product.get("name"),
+                                "price": f"R$ {price:.2f}",
+                                "image_url": product.get("image") or None,
+                                "quantity_needed": quantity_needed_raw,
+                                "quantity_needed_display": needed_display,
+                                "quantity_unit": unit_type,
+                                "quantity_per_unit": qty_per,
+                                "display_quantity_per_unit": format_unit_display(qty_per, unit_type),
+                                "units_to_buy": units,
+                                "total_quantity_added": total_qty,
+                                "total_cost": f"R$ {total_cost:.2f}",
+                                "excess_quantity": (total_qty - est_needed) if est_needed else None
+                            })
+                            break
+            
+            # Final logging & return unchanged
 
-                    if json_data:
-                        try:
-                            fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
-                            for product in iterate_fallback_products(fallback):
-                                title = product.get("name", "").lower()
-                                price = float(str(product.get("price", "0")).replace(",", "."))
-                                unit_type = product.get("unitType", "")
-                                quantity_per_unit = product.get("quantity", 1)
 
-                                if not any(word in title for word in term.lower().split()):
-                                    continue
-
-                                product_name = product.get("name", "").strip().lower()
-                                key = (store, translated, product_name)
-                                if key in seen_items:
-                                    continue
-                                seen_items.add(key)
-
-                                image_raw = product.get("image")
-                                image_url = image_raw if image_raw and image_raw.startswith("http") else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
-
-                                if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
-                                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                                else:
-                                    units_needed = 1
-
-                                total_cost = units_needed * price
-                                total_quantity = units_needed * quantity_per_unit
-
-                                # ----- BEGIN: normalized needed display -----
-                                # Normalize unit display and estimate grams if possible
-                                if quantity_needed_val is not None:
-                                    estimated_needed_val = estimated_needed_val or estimate_mass(original, quantity_needed_unit, quantity_needed_val)
-                                    needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"] and estimated_needed_val:
-                                        needed_display += f" (~{int(estimated_needed_val)}g)"
-                                else:
-                                    needed_display = quantity_needed_raw or ""
-
-                    # ----- END: normalized needed display -----
-                                store_carts[store].append({
-                                    "ingredient": original,
-                                    "translated": translated,
-                                    "product_name": product.get("name"),
-                                    "price": f"R$ {price:.2f}",
-                                    "image_url": image_url,
-                                    "quantity_needed": quantity_needed_raw,
-                                    "quantity_needed_display": needed_display,
-                                    "quantity_unit": unit_type,
-                                    "quantity_per_unit": quantity_per_unit,
-                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
-                                    "units_to_buy": units_needed,
-                                    "total_quantity_added": total_quantity,
-                                    "total_cost": f"R$ {total_cost:.2f}",
-                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
-                                })
-                                found = True
-                                break
                         except Exception as e:
                             logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
         
