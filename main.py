@@ -12,7 +12,7 @@ import sqlite3
 import hashlib
 import yt_dlp
 from bs4 import BeautifulSoup
-import unidecode
+import unidecode from unidecode
 
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -444,6 +444,30 @@ def rappi_cart_search(
             }.get(unit, {})
             return value * table.get(key, 1)
 
+        def clean_tokens(text):
+            return set(
+                unidecode(text.lower())
+                .replace("-", " ")
+                .replace(",", " ")
+                .replace(".", " ")
+                .split()
+            )
+        
+        def score_match(product_name, search_terms):
+            product_tokens = clean_tokens(product_name)
+            scores = []
+        
+            for search in search_terms:
+                search_tokens = clean_tokens(search)
+                overlap = search_tokens & product_tokens
+                missing = search_tokens - product_tokens
+                if not overlap:
+                    continue
+                score = len(overlap) - 0.5 * len(missing)
+                scores.append(score)
+        
+            return max(scores) if scores else -1
+
         seen_items = set()
 
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
@@ -559,11 +583,11 @@ def rappi_cart_search(
                                     continue
                     
                                 product_name = name_elem.get_text(strip=True)
-                                title_norm = unidecode(product_name.lower())
-                                term_words = [unidecode(word.lower().rstrip("s")) for word in term.split()]
-                                if not any(w in title_norm for w in term_words):
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Title mismatch: {title_norm}")
+                                score = score_match(product_name, [term] + fallback_terms)
+                                if score < 1:
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Low match score ({score}) for: {product_name}")
                                     continue
+
                                     
                                 price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
                                 image_url = image_elem.get("src") if image_elem else None
@@ -647,7 +671,12 @@ def rappi_cart_search(
                                     if not term_words or term_words[0] not in title:
                                         continue
 
-                                product_name = product.get("name", "").strip().lower()
+                                product_name = product.get("name", "").strip()
+                                score = score_match(product_name, [term] + fallback_terms)
+                                if score < 1:
+                                    logger.info(f"[rappi-cart][{original} @ {store}] ❌ Low match score ({score}) for: {product_name}")
+                                    continue
+
                                 key = (store, translated, product_name)
                                 if key in seen_items:
                                     continue
