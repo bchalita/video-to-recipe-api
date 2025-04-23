@@ -582,7 +582,7 @@ def rappi_cart_search(
             fallback_prompt = [
                 {
                     "role": "system",
-                    "content": "You are a food product expert fluent in Brazilian Portuguese. Given an ingredient in English, return a list of up to 5 accurate Brazilian Portuguese product names for grocery store search. Return only the list in JSON format. Do not explain."
+                    "content": "You are a food product expert fluent in Brazilian Portuguese. Given an ingredient in English, return a list of up to 5 accurate Brazilian Portuguese product names for grocery store search. Thing as if you were a customer looking for this item, what would you input in the search bar? Use the full recipe to give context. Return only the list in JSON format. Do not explain."
                 },
             ]
 
