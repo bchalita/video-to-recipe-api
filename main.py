@@ -458,7 +458,7 @@ def rappi_cart_search(
         def normalize(text):
             return unidecode(text).lower().strip()
         
-        def score_match(product_name: str, terms: list[str]) -> int:
+        def score_match(product_name: str, terms: list[str], ingredient_base: str) -> int:
             """
             Returns a score for how well a product_name matches any term from terms,
             considering food-domain fallback rules.
@@ -624,7 +624,8 @@ def rappi_cart_search(
                                     continue
                     
                                 product_name = name_elem.get_text(strip=True)
-                                score = score_match(product_name, [term])
+                                ingredient_base = original.lower()
+                                score = score_match(product_name, [term], ingredient_base)
 
 
                                 if score < 1:
@@ -714,8 +715,10 @@ def rappi_cart_search(
                                     if not term_words or term_words[0] not in title:
                                         continue
 
-                                product_name = product.get("name", "").strip()
-                                score = score_match(product_name, [term])
+                                product_name = name_elem.get_text(strip=True)
+                                ingredient_base = original.lower()
+                                score = score_match(product_name, [term], ingredient_base)
+                                
                                 if score < 1:
                                     logger.info(f"[rappi-cart][{original} @ {store}] ❌ Low match score ({score}) for: {product_name}")
                                     continue
