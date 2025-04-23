@@ -567,6 +567,7 @@ def rappi_cart_search(
                     if found:
                         break
                     if "zonasul.com.br" in url:
+                        store = "Zona Sul Direct"
                         try:
                             search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
@@ -731,7 +732,6 @@ def rappi_cart_search(
                     
                             if not product_candidates:
                                 logger.warning(f"[rappi-cart][{original} @ {store}] ❌ No viable products to evaluate with GPT.")
-                                return
                     
                             # GPT selection
                             gpt_prompt = [
@@ -818,11 +818,11 @@ def rappi_cart_search(
                             logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
         
         for store, items in store_carts.items():
-            logger.info(f"[rappi-cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
+            logger.info(f"[Cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
 
         # ▶️ Logging number of items per store
         for store, items in store_carts.items():
-            logger.info(f"[rappi-cart] {store} has {len(items)} items")
+            logger.info(f"[Cart] {store} has {len(items)} items")
 
         # ▶️ Fix #1 & #3: assign to local var, cache and return
         final_cart_result = {"carts_by_store": store_carts}
