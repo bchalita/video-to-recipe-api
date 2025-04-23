@@ -483,7 +483,19 @@ def rappi_cart_search(
             score_boost = 0
             if "azeite" in name and "extra virgem" in name:
                 score_boost = 10
-        
+            if ingredient_base in ["steak", "bife"]:
+                name_lower = product_name.lower()
+                if any(term in name_lower for term in ["frango", "peito", "patinho", "músculo", "suíno", "linguiça"]):
+                    return -1  # Hard reject
+                if not any(term in name_lower for term in ["contrafilé", "contra filé", "filé mignon", "alcatra", "coxão mole", "entrecôte"]):
+                    return 0  # Weak match
+            if ingredient_base == "vinegar":
+                name_lower = product_name.lower()
+                if "balsâmico" in name_lower:
+                    return -1  # Reject unless specified
+                if not any(v in name_lower for v in ["vinagre de maçã", "vinagre de vinho branco", "vinagre de álcool"]):
+                    return 0  # Weak match
+
             # Fuzzy match against any term
             best_score = max(fuzz.partial_ratio(term.lower(), name) for term in terms)
             return best_score + score_boost
@@ -525,7 +537,7 @@ def rappi_cart_search(
                         "- Rosemary, cilantro, oregano, bay leaf → same rules apply: single-ingredient, unblended.\n\n"
             
                         "[MEAT]\n"
-                        "- Steak: only 'bife de contrafilé', 'filé mignon', 'alcatra', 'coxão mole'. Reject: chicken/pork/processed.\n"
+                        "- Steak → fallback must have: 'bife de contrafilé', 'bife ancho', 'alcatra', 'coxão mole', or 'filé mignon'; reject chicken, pork, overly processed beef, tough meets like patinho or if 'file de peito' is in the name\n"
                         "- Ground meat: default to 'carne moída bovina'. Accept 'suína' or 'frango' if specified.\n"
                         "- Pancetta: fallback to 'bacon em cubos' or 'fatiado'. Reject: 'presunto', 'linguiça'.\n"
                         "- Shrimp: 'camarão rosa' or 'cinza', peeled preferred. Reject: breaded/fried/precooked.\n\n"
@@ -545,7 +557,7 @@ def rappi_cart_search(
             
                         "[PANTRY ITEMS]\n"
                         "- Olive oil: only 'azeite de oliva extra virgem'.\n"
-                        "- Vinegar: fallback order: 'vinagre de álcool branco' > 'vinagre de vinho branco' > 'vinagre balsâmico'.\n"
+                        "- Vinegar: fallback order: 'vinagre de maça', 'vinagre de álcool' > 'vinagre de vinho branco'\n"
                         "- Cacao powder: only 'cacau 100%' or 'cacau alcalino'. Reject: 'achocolatado', 'Nescau'.\n"
                         "- Flour: only 'farinha de trigo'. Reject: cake mixes, 'para empanar', 'farinha de rosca'.\n"
                         "- Pasta: match format (e.g. 'espaguete', 'penne', 'fusilli'). Fallback: 'massa tipo espaguete'.\n\n"
