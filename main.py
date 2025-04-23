@@ -453,20 +453,63 @@ def rappi_cart_search(
                 .split()
             )
         
+        def normalize(text):
+            return unidecode(text).lower().strip()
+        
         def score_match(product_name, search_terms):
-            product_tokens = clean_tokens(product_name)
-            scores = []
+            product_name_norm = normalize(product_name)
         
-            for search in search_terms:
-                search_tokens = clean_tokens(search)
-                overlap = search_tokens & product_tokens
-                missing = search_tokens - product_tokens
-                if not overlap:
-                    continue
-                score = len(overlap) - 0.5 * len(missing)
-                scores.append(score)
+            if any(x in product_name_norm for x in [
+                "tempero", "mistura", "combo", "kit", "pronto", "congelado", "empanado", "frito", "defumado", "instantaneo"
+            ]):
+                return -1  # hard reject
         
-            return max(scores) if scores else -1
+            # Generic herb check: reject mixes
+            if re.search(r'\b(cheiro verde|ervas finas|ervas aromatizadas|tempero de ervas)\b', product_name_norm):
+                return -1
+        
+            # Garlic-specific: reject 'alho poró', powders
+            if "alho" in [normalize(term) for term in search_terms]:
+                if "poró" in product_name_norm or "po" in product_name_norm:
+                    return -1
+        
+            # Parsley: reject compound or dehydrated if fresh mentioned
+            if "salsa" in [normalize(term) for term in search_terms]:
+                if "cheiro verde" in product_name_norm or "ervas" in product_name_norm:
+                    return -1
+        
+            # Vinegar: prefer pure types
+            if "vinagre" in [normalize(term) for term in search_terms]:
+                if "balsamico" in product_name_norm:
+                    return 3
+                if "vinho branco" in product_name_norm:
+                    return 4
+                if "alcool" in product_name_norm:
+                    return 5
+                return 2  # fallback vinegar
+        
+            # Olive oil
+            if "azeite" in [normalize(term) for term in search_terms]:
+                if "extra virgem" in product_name_norm:
+                    return 5
+                if "virgem" in product_name_norm:
+                    return 3
+                return -1  # reject other types
+        
+            # Score match based on overlap
+            term_scores = []
+            for term in search_terms:
+                term_norm = normalize(term)
+                if term_norm in product_name_norm:
+                    term_scores.append(5)
+                elif all(word in product_name_norm for word in term_norm.split()):
+                    term_scores.append(3)
+                elif any(word in product_name_norm for word in term_norm.split()):
+                    term_scores.append(1)
+        
+            if not term_scores:
+                return 0
+            return max(term_scores)
 
         seen_items = set()
 
@@ -481,53 +524,62 @@ def rappi_cart_search(
 
 
             fallback_prompt = [
-                {"role": "system", "content": (
-                    "You are a food domain expert fluent in Brazilian Portuguese. Be strict with relevance.\n"
-                    "Return only a JSON list of up to 5 product name alternatives in Brazilian Portuguese. No extra explanation, no formatting. If no valid match, return [].\n\n"
-                    "Fallback rules:\n"
-                    "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
-                    "- Prefer fresh, whole products over processed, frozen, or chopped forms\n"
-                    "- Reject:\n"
-                    "  * pre-chopped or frozen if fresh equivalent exists (e.g. 'aipo picado')\n"
-                    "  * dried or powdered if fresh herb is requested (e.g. 'alho em pó')\n"
-                    "  * 'misturas', 'temperos', or compound blends unless term includes it\n"
-                    "- Accept:\n"
-                    "  * root word matches like 'cebola' for 'cebolas', 'alho' for 'dentes de alho'\n"
-                    "  * items that match plural or singular variants\n"
-                    "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
-                    "- Stock/broth → convert to 'caldo de X' (e.g. beef = 'caldo de carne', chicken = 'caldo de galinha')\n"
-                    "- 'mushroom' → fallback order: 'cogumelo paris', 'portobello', 'shitake', 'ostra'; never use 'champignon' unless explicitly specified\n"
-                    "- Garlic → exclude 'alho poró', dried, or powdered; must be fresh garlic cloves\n"
-                    "- Onion → fallback to 'cebola amarela', then 'cebola branca'; only use 'cebola roxa' if explicitly specified or if recipe is cold (e.g. salad)\n"
-                    "- Herbs must be pure: reject 'cheiro verde', 'ervas finas', or anything with mixed spices\n"
-                    "- 'thyme' → only match pure thyme (fresh or dried); reject compound mixes like 'tempero para carne'\n"
-                    "- 'parsley' → match 'salsinha' only; avoid blends\n"
-                    "- 'basil' → 'manjericão fresco'; reject dry or blended versions unless recipe is dry-rub\n"
-                    "- 'cream' in sauces or pasta → match 'creme de leite fresco'; avoid boxed or sweetened versions\n"
-                    "- 'sour cream' → no direct match in Brazil; default to 'nata' or 'creme de leite com limão'\n"
-                    "- 'heavy cream' or 'double cream' → 'creme de leite fresco'; reject canned or light cream\n"
-                    "- 'cream cheese' → only accept labeled 'cream cheese'; fallback to 'requeijão cremoso' if context is for spreading\n"
-                    "- 'chocolate meio amargo' → validate if product weight meets recipe quantity; adjust `units_to_buy`\n"
-                    "- 'doce de leite' → only accept soft/paste versions; reject candy-style or cuttable ones\n"
-                    "- 'parmesan rind' → only accept solid pieces of cheese with rind; reject grated or powder\n"
-                    "- 'pancetta' → can fallback to 'bacon em cubos' or 'bacon fatiado'; never to presunto or linguiça\n"
-                    "- 'minced meat' → fallback to 'carne moída bovina' unless 'porco' or 'frango' specified\n"
-                    "- 'pork mince' → match only if 'suína' is present in product name\n"
-                    "- 'vinegar' → if unspecified, match 'vinagre de álcool branco'; if in dressing, consider 'vinagre de vinho branco' or 'vinagre balsâmico'\n"
-                    "- 'steak' → fallback must have 'bife', 'filet mignon', 'bife de contrafilé', 'alcatra', or 'coxão mole'; avoid chicken or pork cuts\n"
-                    "- 'potato' → default to fresh 'batata inglesa'; reject pre-fried or frozen fries unless recipe specifies\n"
-                    "- 'pepper' → only match 'pimenta do reino' (ground or whole); reject fresh peppers like 'pimenta cambuci'\n"
-                    "- 'cacao powder' → only accept 'cacau 100%' or 'cacau alcalino'; reject 'achocolatado', 'Nescau', or similar\n"
-                    "- 'flour' → match 'farinha de trigo'; reject 'farinha para empanar', 'farinha de rosca', or cake mixes\n"
-                    "- 'olive oil' → only accept 'azeite de oliva extra virgem'\n"
-                    "- 'pasta' → match by format ('espaguete', 'penne', 'fusilli'); fallback to 'massa tipo espaguete'\n"
-                    "- 'boursin' or specialty cheese → validate against inclusion of herb blends; reject if 'ervas finas' or 'temperado' is included unless explicitly required\n"
-                    "- 'shrimp' → accept 'camarão cinza' or 'camarão rosa', peeled preferred; reject breaded or precooked unless recipe specifies\n"
-                    "- Adjust product selection based on cuisine:\n"
-                    "  * Asian → prioritize 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'\n"
-                    "  * Italian → prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'\n"
-                )}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a food product expert fluent in Brazilian Portuguese. "
+                        "Strictly follow these fallback rules when given an ingredient name. "
+                        "Output only a raw JSON list (no explanation, no formatting) with up to 5 product name alternatives in Brazilian Portuguese. If none apply, return [].\n\n"
+            
+                        "General rules:\n"
+                        "- Prefer: fresh > refrigerated > shelf-stable > frozen > canned > powdered.\n"
+                        "- Reject any item with: 'mistura', 'tempero', 'kit', 'combo', or seasoning blends unless explicitly requested.\n"
+                        "- Reject: frozen, chopped, pre-cooked, or powdered unless context clearly allows it.\n"
+                        "- Accept singular/plural/root variants (e.g., 'alho' for 'dentes de alho', 'cebola' for 'cebolas').\n"
+            
+                        "Category rules:\n\n"
+            
+                        "[HERBS]\n"
+                        "- Only pure herb items. Reject: 'cheiro verde', 'ervas finas', mixed herbs.\n"
+                        "- Reject powdered/dried unless fallback allows.\n"
+                        "- Parsley → 'salsinha'.\n"
+                        "- Basil → 'manjericão fresco' only.\n"
+                        "- Thyme → only pure 'tomilho'.\n"
+                        "- Rosemary, cilantro, oregano, bay leaf → same rules apply: single-ingredient, unblended.\n\n"
+            
+                        "[MEAT]\n"
+                        "- Steak: only 'bife de contrafilé', 'filé mignon', 'alcatra', 'coxão mole'. Reject: chicken/pork/processed.\n"
+                        "- Ground meat: default to 'carne moída bovina'. Accept 'suína' or 'frango' if specified.\n"
+                        "- Pancetta: fallback to 'bacon em cubos' or 'fatiado'. Reject: 'presunto', 'linguiça'.\n"
+                        "- Shrimp: 'camarão rosa' or 'cinza', peeled preferred. Reject: breaded/fried/precooked.\n\n"
+            
+                        "[DAIRY]\n"
+                        "- Cream: only 'creme de leite fresco'.\n"
+                        "- Sour cream → 'nata' or 'creme de leite com limão'.\n"
+                        "- Heavy/double cream → 'creme de leite fresco'.\n"
+                        "- Cream cheese → only if labeled. Fallback: 'requeijão cremoso' for spreading.\n"
+                        "- Parmesan rind: must be solid cheese with rind. Reject grated or powder.\n\n"
+            
+                        "[VEGETABLES]\n"
+                        "- Onion: 'cebola amarela' > 'cebola branca'. Only use 'cebola roxa' in cold recipes.\n"
+                        "- Garlic: only whole cloves. Reject: 'alho poró', powder.\n"
+                        "- Potatoes: only fresh whole 'batata inglesa'. Reject: frozen fries or mashed.\n"
+                        "- Mushrooms: 'cogumelo paris' > 'portobello' > 'shitake' > 'ostra'. Reject 'champignon'.\n\n"
+            
+                        "[PANTRY ITEMS]\n"
+                        "- Olive oil: only 'azeite de oliva extra virgem'.\n"
+                        "- Vinegar: fallback order: 'vinagre de álcool branco' > 'vinagre de vinho branco' > 'vinagre balsâmico'.\n"
+                        "- Cacao powder: only 'cacau 100%' or 'cacau alcalino'. Reject: 'achocolatado', 'Nescau'.\n"
+                        "- Flour: only 'farinha de trigo'. Reject: cake mixes, 'para empanar', 'farinha de rosca'.\n"
+                        "- Pasta: match format (e.g. 'espaguete', 'penne', 'fusilli'). Fallback: 'massa tipo espaguete'.\n\n"
+            
+                        "[CUISINE CONTEXT]\n"
+                        "- Asian: prioritize 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'.\n"
+                        "- Italian: prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'."
+                    )
+                }
             ]
+
 
             fallback_prompt.append({"role": "user", "content": f"Term: '{translated}'"})
 
