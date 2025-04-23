@@ -12,6 +12,8 @@ import sqlite3
 import hashlib
 import yt_dlp
 from bs4 import BeautifulSoup
+import unidecode
+
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import torch
@@ -460,6 +462,15 @@ def rappi_cart_search(
                     "Return only a JSON list of up to 5 product name alternatives in Brazilian Portuguese. No extra explanation, no formatting. If no valid match, return [].\n\n"
                     "Fallback rules:\n"
                     "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
+                    "- Prefer fresh, whole products over processed, frozen, or chopped forms\n"
+                    "- Reject:\n"
+                    "  * pre-chopped or frozen if fresh equivalent exists (e.g. 'aipo picado')\n"
+                    "  * dried or powdered if fresh herb is requested (e.g. 'alho em pó')\n"
+                    "  * 'misturas', 'temperos', or compound blends unless term includes it\n"
+                    "- Accept:\n"
+                    "  * root word matches like 'cebola' for 'cebolas', 'alho' for 'dentes de alho'\n"
+                    "  * items that match plural or singular variants\n"
+                    "- Always prefer fresh over frozen when context suggests sautéing, frying, or serving fresh\n"
                     "- Stock/broth → convert to 'caldo de X' (e.g. beef = 'caldo de carne', chicken = 'caldo de galinha')\n"
                     "- 'mushroom' → fallback order: 'cogumelo paris', 'portobello', 'shitake', 'ostra'; never use 'champignon' unless explicitly specified\n"
                     "- Garlic → exclude 'alho poró', dried, or powdered; must be fresh garlic cloves\n"
@@ -532,6 +543,7 @@ def rappi_cart_search(
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
                             response = requests.get(search_url, headers=headers, timeout=10)
                             soup = BeautifulSoup(response.text, "html.parser")
+                            found = False
                     
                             product_blocks = soup.select("article.vtex-product-summary-2-x-element")
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
@@ -547,12 +559,12 @@ def rappi_cart_search(
                                     continue
                     
                                 product_name = name_elem.get_text(strip=True)
-                                title = product_name.lower()
-                    
-                                if not any(word in title for word in term.lower().split()):
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Title mismatch: {title}")
+                                title_norm = unidecode(product_name.lower())
+                                term_words = [unidecode(word.lower().rstrip("s")) for word in term.split()]
+                                if not any(w in title_norm for w in term_words):
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Title mismatch: {title_norm}")
                                     continue
-                    
+                                    
                                 price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
                                 image_url = image_elem.get("src") if image_elem else None
                     
@@ -602,11 +614,12 @@ def rappi_cart_search(
                                 logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ✅ Added: {product_name}")
                                 found = True
                                 break
-                    
+                            if not found:
+                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No acceptable product found for term '{term}'")
+
                         except Exception as e:
                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
                         continue
-
 
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
