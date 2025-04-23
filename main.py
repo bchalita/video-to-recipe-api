@@ -13,6 +13,8 @@ import hashlib
 import yt_dlp
 from bs4 import BeautifulSoup
 from unidecode import unidecode
+from rapidfuzz import fuzz
+
 
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
