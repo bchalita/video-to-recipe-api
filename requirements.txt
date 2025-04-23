@@ -1,6 +1,7 @@
 numpy==1.24.4
 fastapi
 uvicorn
+unidecode
 openai
 yt-dlp @ https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
 python-multipart
