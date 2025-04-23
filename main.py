@@ -693,7 +693,7 @@ def rappi_cart_search(
                     soup = BeautifulSoup(response.text, "html.parser")
                     json_data = extract_next_data_json(soup)
 
-                    else:
+                    if json_data:
                         try:
                             fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
                             # 🛒 Log first 5 product titles for this search term
