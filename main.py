@@ -583,7 +583,9 @@ def rappi_cart_search(
                                     continue
                     
                                 product_name = name_elem.get_text(strip=True)
-                                score = score_match(product_name, [term] + fallback_terms)
+                                score = score_match(product_name, [term])
+
+
                                 if score < 1:
                                     logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Low match score ({score}) for: {product_name}")
                                     continue
@@ -672,7 +674,7 @@ def rappi_cart_search(
                                         continue
 
                                 product_name = product.get("name", "").strip()
-                                score = score_match(product_name, [term] + fallback_terms)
+                                score = score_match(product_name, [term])
                                 if score < 1:
                                     logger.info(f"[rappi-cart][{original} @ {store}] ❌ Low match score ({score}) for: {product_name}")
                                     continue
