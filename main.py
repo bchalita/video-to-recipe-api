@@ -533,17 +533,17 @@ def rappi_cart_search(
                             response = requests.get(search_url, headers=headers, timeout=10)
                             soup = BeautifulSoup(response.text, "html.parser")
                     
-                            containers = soup.select("div.vtex-product-summary-2-x-container")
-                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(containers)} containers")
+                            product_blocks = soup.select("article.vtex-product-summary-2-x-element")
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
                     
-                            for container in containers[:5]:
-                                name_elem = container.select_one("span.vtex-product-summary-2-x-productBrand")
-                                image_elem = container.select_one("img.vtex-product-summary-2-x-imageNormal")
-                                price_integer = container.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
-                                price_fraction = container.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
+                            for product in product_blocks[:5]:
+                                name_elem = product.select_one("span.vtex-product-summary-2-x-productBrand")
+                                image_elem = product.select_one("img.vtex-product-summary-2-x-imageNormal")
+                                price_int = product.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
+                                price_frac = product.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
                     
-                                if not name_elem or not price_integer:
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⛔️ Skipping: incomplete product block")
+                                if not name_elem or not price_int:
+                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⛔️ Skipping: incomplete price or name")
                                     continue
                     
                                 product_name = name_elem.get_text(strip=True)
@@ -553,10 +553,9 @@ def rappi_cart_search(
                                     logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Title mismatch: {title}")
                                     continue
                     
-                                price = float(f"{price_integer.text}.{price_fraction.text if price_fraction else '00'}")
+                                price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
                                 image_url = image_elem.get("src") if image_elem else None
                     
-                                # Extract quantity from name: 500g, 1,2 kg, Unidade
                                 quantity_match = re.search(r"(\d+(?:[.,]\d+)?)(\s?)(kg|g|unidade|un)", product_name.lower())
                                 if quantity_match:
                                     val = float(quantity_match.group(1).replace(",", "."))
@@ -565,7 +564,7 @@ def rappi_cart_search(
                                     quantity_per_unit = int(val * factor)
                                     logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 📦 Parsed quantity: {quantity_per_unit}g from '{quantity_match.group(0)}'")
                                 else:
-                                    quantity_per_unit = 500  # fallback
+                                    quantity_per_unit = 500
                                     logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No quantity match, using default: {quantity_per_unit}g")
                     
                                 units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999)) if estimated_needed_val else 1
@@ -607,6 +606,7 @@ def rappi_cart_search(
                         except Exception as e:
                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
                         continue
+
 
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
