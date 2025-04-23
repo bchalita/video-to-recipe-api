@@ -445,71 +445,7 @@ def rappi_cart_search(
                 "cup": {"milk": 240, "heavy cream": 240, "water": 240, "cherry tomatoes": 150}
             }.get(unit, {})
             return value * table.get(key, 1)
-
-        def clean_tokens(text):
-            return set(
-                unidecode(text.lower())
-                .replace("-", " ")
-                .replace(",", " ")
-                .replace(".", " ")
-                .split()
-            )
         
-        def normalize(text):
-            return unidecode(text).lower().strip()
-        
-        def score_match(product_name: str, terms: list[str], ingredient_base: str) -> int:
-            """
-            Returns a score for how well a product_name matches any term from terms,
-            considering food-domain fallback rules.
-            """
-            name = product_name.lower()
-        
-            # Hard filters (reject before scoring)
-            forbidden_patterns = [
-                r'\b(palha|pré-frit[ao]|congelad[ao])\b',  # e.g., batata palha
-                r'\b(tempero|mistura|ervas finas|cheiro verde)\b',
-                r'\b(requeijão|cream cheese light|light cream|chantilly|doce em pedaço|doce de corte)\b',
-                r'\b(salsinha e cebolinha|alho e cebola|alho poró)\b',
-                r'\b(presunto|linguiça)\b',
-                r'\b(descascado|em pó|em flocos|em conserva|picado|triturado|ralado)\b',
-                r'\b(saleiro|frasco|pote plástico|refil|spray)\b'
-            ]
-            for pattern in forbidden_patterns:
-                if re.search(pattern, name):
-                    return -1
-        
-            # Soft filter: promote terms like 'extra virgem' for olive oil
-            score_boost = 0
-            if "azeite" in name and "extra virgem" in name:
-                score_boost = 10
-
-            if ingredient_base == "shallot":
-                name_lower = product_name.lower()
-                if "cebola roxa" in name_lower:
-                    return 70  # Soft match for purple onion
-                if "chalota" in name_lower:
-                    return 100  # Direct match
-                if "cebola" in name_lower:
-                    return 30  # Weak match fallback
-                return -1  # Otherwise reject
-            if ingredient_base in ["steak", "bife"]:
-                name_lower = product_name.lower()
-                if any(term in name_lower for term in ["frango", "peito", "patinho", "músculo", "suíno", "linguiça"]):
-                    return -1  # Hard reject
-                if not any(term in name_lower for term in ["contrafilé", "contra filé", "filé mignon", "alcatra", "coxão mole", "entrecôte"]):
-                    return 0  # Weak match
-            if ingredient_base == "vinegar":
-                name_lower = product_name.lower()
-                if "balsâmico" in name_lower:
-                    return -1  # Reject unless specified
-                if not any(v in name_lower for v in ["vinagre de maçã", "vinagre de vinho branco", "vinagre de álcool"]):
-                    return 0  # Weak match
-
-            # Fuzzy match against any term
-            best_score = max(fuzz.partial_ratio(term.lower(), name) for term in terms)
-            return best_score + score_boost
-
         seen_items = set()
 
         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
@@ -641,84 +577,131 @@ def rappi_cart_search(
                             product_blocks = soup.select("article.vtex-product-summary-2-x-element")
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
                     
+                            product_candidates = []
+                            
                             for product in product_blocks[:5]:
                                 name_elem = product.select_one("span.vtex-product-summary-2-x-productBrand")
                                 image_elem = product.select_one("img.vtex-product-summary-2-x-imageNormal")
                                 price_int = product.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
                                 price_frac = product.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
-                    
+                            
                                 if not name_elem or not price_int:
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⛔️ Skipping: incomplete price or name")
                                     continue
-                    
-                                product_name = name_elem.get_text(strip=True)
-                                ingredient_base = original.lower()
-                                score = score_match(product_name, [term], ingredient_base)
-                                logger.debug(f"[rappi-cart][{original} @ {store}] → Score {score} for '{product_name}'")
-
-
-
-                                if score < 0:
-                                    logger.info(f"[rappi-cart][{original} @ {store}] ❌ Low match score ({score}) for: {product_name}")
-                                    continue
-
-                                    
-                                price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
-                                image_url = image_elem.get("src") if image_elem else None
-                    
-                                quantity_match = re.search(r"(\d+(?:[.,]\d+)?)(\s?)(kg|g|unidade|un)", product_name.lower())
-                                if quantity_match:
-                                    val = float(quantity_match.group(1).replace(",", "."))
-                                    unit = quantity_match.group(3).lower()
-                                    factor = {"kg": 1000, "g": 1, "un": 1, "unidade": 1}.get(unit, 1)
-                                    quantity_per_unit = int(val * factor)
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 📦 Parsed quantity: {quantity_per_unit}g from '{quantity_match.group(0)}'")
-                                else:
-                                    quantity_per_unit = 500
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No quantity match, using default: {quantity_per_unit}g")
-                    
-                                units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999)) if estimated_needed_val else 1
-                                total_cost = units_needed * price
-                                total_quantity = units_needed * quantity_per_unit
-                    
-                                needed_display = (
-                                    format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                    + f" (~{int(estimated_needed_val)}g)"
-                                    if quantity_needed_val else quantity_needed_raw or ""
-                                )
-                    
-                                key = (store, translated, product_name.lower())
-                                if key in seen_items:
-                                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔁 Already seen: {product_name}")
-                                    continue
-                                seen_items.add(key)
-                    
-                                store_carts[store].append({
-                                    "ingredient": original,
-                                    "translated": translated,
-                                    "product_name": product_name,
-                                    "price": f"R$ {price:.2f}",
-                                    "image_url": image_url,
-                                    "quantity_needed": quantity_needed_raw,
-                                    "quantity_needed_display": needed_display,
-                                    "quantity_unit": "",
-                                    "quantity_per_unit": quantity_per_unit,
-                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
-                                    "units_to_buy": units_needed,
-                                    "total_quantity_added": total_quantity,
-                                    "total_cost": f"R$ {total_cost:.2f}",
-                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                            
+                                full_name = name_elem.get_text(strip=True)
+                                full_price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
+                                description = full_name.lower()
+                            
+                                product_candidates.append({
+                                    "name": full_name,
+                                    "price": f"R$ {full_price:.2f}",
+                                    "description": description,
+                                    "image_url": image_elem.get("src") if image_elem else None,
+                                    "raw_block": product  # Keep the full block for later reuse
                                 })
-                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ✅ Added: {product_name}")
-                                found = True
-                                break
-                            if not found:
-                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No acceptable product found for term '{term}'")
+                            
+                            if not product_candidates:
+                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
+                                continue
+                            
+                            # 🔍 Ask GPT to select the best one
+                            gpt_prompt = [
+                                {"role": "system", "content": (
+                                    "You're helping someone shop online for groceries in Brazil. "
+                                    "From the list of available products, select the **single** best match for the ingredient mentioned. "
+                                    "Reply only with the product name. If none are acceptable, return 'REJECT'."
+                                )},
+                                {"role": "user", "content": (
+                                    f"Ingredient: {original}\n\n"
+                                    f"Available products:\n" + 
+                                    "\n".join([f"{i+1}. {p['name']} — {p['price']} — {p['description']}" for i, p in enumerate(product_candidates)]) +
+                                    "\n\nWhich product should be used?"
+                                )}
+                            ]
+                            
+                            response = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=gpt_prompt,
+                                temperature=0,
+                                max_tokens=50
+                            )
+                            
+                            chosen_name = response.choices[0].message.content.strip()
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧠 GPT chose: {chosen_name}")
+                            
+                            if chosen_name == "REJECT":
+                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ GPT rejected all products")
+                                continue
+                            
+                            # Match GPT's selected product to original candidate
+                            chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
+                            if not chosen_product:
+                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ GPT result '{chosen_name}' not found in product list")
+                                continue
+                            
+                        # You can now proceed to estimate quantity and cost using `chosen_product["raw_block"]
+                            product_name = chosen_product["name"]
+                            product_block = chosen_product["raw_block"]
+                            image_url = chosen_product["image_url"]
+                            price_text = chosen_product["price"].replace("R$", "").strip()
+                            price = float(price_text.replace(",", "."))
+                            
+                            # You can use the same quantity regex from before, applied to the chosen product
+                            quantity_match = re.search(r"(\d+(?:[.,]\d+)?)(\s?)(kg|g|unidade|un)", product_name.lower())
+                            if quantity_match:
+                                val = float(quantity_match.group(1).replace(",", "."))
+                                unit = quantity_match.group(3).lower()
+                                factor = {"kg": 1000, "g": 1, "un": 1, "unidade": 1}.get(unit, 1)
+                                quantity_per_unit = int(val * factor)
+                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 📦 Parsed quantity: {quantity_per_unit}g from '{quantity_match.group(0)}'")
+                            else:
+                                quantity_per_unit = 500
+                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No quantity match, using default: {quantity_per_unit}g")
+                            
+                            units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999)) if estimated_needed_val else 1
+                            total_cost = units_needed * price
+                            total_quantity = units_needed * quantity_per_unit
+                            
+                            needed_display = (
+                                format_unit_display(quantity_needed_val, quantity_needed_unit)
+                                + f" (~{int(estimated_needed_val)}g)"
+                                if quantity_needed_val else quantity_needed_raw or ""
+                            )
+                            
+                            key = (store, translated, product_name.lower())
+                            if key in seen_items:
+                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔁 Already seen: {product_name}")
+                                continue
+                            seen_items.add(key)
+                            
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": translated,
+                                "product_name": product_name,
+                                "price": f"R$ {price:.2f}",
+                                "image_url": image_url,
+                                "quantity_needed": quantity_needed_raw,
+                                "quantity_needed_display": needed_display,
+                                "quantity_unit": "",
+                                "quantity_per_unit": quantity_per_unit,
+                                "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+                                "units_to_buy": units_needed,
+                                "total_quantity_added": total_quantity,
+                                "total_cost": f"R$ {total_cost:.2f}",
+                                "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                            })
+                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ✅ Added: {product_name}")
 
+                            found = True
+                            break
+                            
                         except Exception as e:
                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
                         continue
-
+                        
+                    if not found:
+                        logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No acceptable product found for term '{term}'")
+                    
                     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
                     soup = BeautifulSoup(response.text, "html.parser")
                     json_data = extract_next_data_json(soup)
@@ -726,84 +709,111 @@ def rappi_cart_search(
                     if json_data:
                         try:
                             fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
-                            # 🛒 Log first 5 product titles for this search term
+                            product_candidates = []
+                    
                             preview = list(iterate_fallback_products(fallback))[:5]
                             logger.info(f"[rappi-cart][{original} @ {store} / term: {term}] First 5 fallback results: {[p.get('name') for p in preview]}")
-
+                    
                             for product in iterate_fallback_products(fallback):
-                                title = product.get("name", "").lower()
+                                name = product.get("name", "").strip()
+                                description = name.lower()
                                 price = float(str(product.get("price", "0")).replace(",", "."))
-                                unit_type = product.get("unitType", "")
-                                quantity_per_unit = product.get("quantity", 1)
-
-                                term_words = term.lower().split()
-                                title = product.get("name", "").lower()
-                                
-                                # Primary: all words must match (strict)
-                                if not all(word in title for word in term_words):
-                                    # Secondary: noun-only relaxed match
-                                    if not term_words or term_words[0] not in title:
-                                        continue
-
-                                product_name = product.get("name", "").strip()                                
-                                ingredient_base = original.lower()
-                                score = score_match(product_name, [term], ingredient_base)
-                                logger.debug(f"[rappi-cart][{original} @ {store}] → Score {score} for '{product_name}'")
-
-                                
-                                if score < 0:
-                                    logger.info(f"[rappi-cart][{original} @ {store}] ❌ Low match score ({score}) for: {product_name}")
-                                    continue
-
-                                key = (store, translated, product_name)
-                                if key in seen_items:
-                                    continue
-                                seen_items.add(key)
-
                                 image_raw = product.get("image")
                                 image_url = image_raw if image_raw and image_raw.startswith("http") else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
-
-                                if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
-                                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                                else:
-                                    units_needed = 1
-
-                                total_cost = units_needed * price
-                                total_quantity = units_needed * quantity_per_unit
-
-                                # ----- BEGIN: normalized needed display -----
-                                # Normalize unit display and estimate grams if possible
-                                if quantity_needed_val is not None:
-                                    estimated_needed_val = estimated_needed_val or estimate_mass(original, quantity_needed_unit, quantity_needed_val)
-                                    needed_display = format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                    if quantity_needed_unit in ["un", "tbsp", "tsp", "cup", "clove"] and estimated_needed_val:
-                                        needed_display += f" (~{int(estimated_needed_val)}g)"
-                                else:
-                                    needed_display = quantity_needed_raw or ""
-
-                    # ----- END: normalized needed display -----
-                                store_carts[store].append({
-                                    "ingredient": original,
-                                    "translated": translated,
-                                    "product_name": product.get("name"),
+                    
+                                product_candidates.append({
+                                    "name": name,
                                     "price": f"R$ {price:.2f}",
+                                    "description": description,
                                     "image_url": image_url,
-                                    "quantity_needed": quantity_needed_raw,
-                                    "quantity_needed_display": needed_display,
-                                    "quantity_unit": unit_type,
-                                    "quantity_per_unit": quantity_per_unit,
-                                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
-                                    "units_to_buy": units_needed,
-                                    "total_quantity_added": total_quantity,
-                                    "total_cost": f"R$ {total_cost:.2f}",
-                                    "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                                    "raw_block": product
                                 })
-                                # ✅ Selected product match
-                                logger.info(f"[rappi-cart][{original} @ {store}] → Selected match: {product.get('name')}")
-                                if not found:
-                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No match found. Terms tried: {search_terms}")
-                                found = True
-                                break
+                    
+                            if not product_candidates:
+                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ No viable products to evaluate with GPT.")
+                                return
+                    
+                            # GPT selection
+                            gpt_prompt = [
+                                {"role": "system", "content": (
+                                    "You're helping someone shop online for groceries in Brazil. "
+                                    "From the list of available products, select the **single** best match for the ingredient mentioned. "
+                                    "Reply only with the product name. If none are acceptable, return 'REJECT'."
+                                )},
+                                {"role": "user", "content": (
+                                    f"Ingredient: {original}\n\n"
+                                    f"Available products:\n" + 
+                                    "\n".join([f"{i+1}. {p['name']} — {p['price']} — {p['description']}" for i, p in enumerate(product_candidates)]) +
+                                    "\n\nWhich product should be used?"
+                                )}
+                            ]
+                    
+                            response = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=gpt_prompt,
+                                temperature=0,
+                                max_tokens=50
+                            )
+                    
+                            chosen_name = response.choices[0].message.content.strip()
+                            logger.info(f"[rappi-cart][{original} @ {store}] 🧠 GPT chose: {chosen_name}")
+                    
+                            if chosen_name == "REJECT":
+                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT rejected all products")
+                                return
+                    
+                            chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
+                            if not chosen_product:
+                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found in product list")
+                                return
+                    
+                            # Extract chosen product info
+                            product_name = chosen_product["name"]
+                            product_block = chosen_product["raw_block"]
+                            price_text = chosen_product["price"].replace("R$", "").strip()
+                            price = float(price_text.replace(",", "."))
+                            image_url = chosen_product["image_url"]
+                            unit_type = product_block.get("unitType", "")
+                            quantity_per_unit = product_block.get("quantity", 1)
+                    
+                            if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
+                                units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                            else:
+                                units_needed = 1
+                    
+                            total_cost = units_needed * price
+                            total_quantity = units_needed * quantity_per_unit
+                    
+                            needed_display = (
+                                format_unit_display(quantity_needed_val, quantity_needed_unit)
+                                + f" (~{int(estimated_needed_val)}g)"
+                                if quantity_needed_val else quantity_needed_raw or ""
+                            )
+                    
+                            key = (store, translated, product_name.lower())
+                            if key in seen_items:
+                                logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
+                                return
+                            seen_items.add(key)
+                    
+                            store_carts[store].append({
+                                "ingredient": original,
+                                "translated": translated,
+                                "product_name": product_name,
+                                "price": f"R$ {price:.2f}",
+                                "image_url": image_url,
+                                "quantity_needed": quantity_needed_raw,
+                                "quantity_needed_display": needed_display,
+                                "quantity_unit": unit_type,
+                                "quantity_per_unit": quantity_per_unit,
+                                "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
+                                "units_to_buy": units_needed,
+                                "total_quantity_added": total_quantity,
+                                "total_cost": f"R$ {total_cost:.2f}",
+                                "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
+                            })
+                            logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
+                    
                         except Exception as e:
                             logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
         
