@@ -456,60 +456,35 @@ def rappi_cart_search(
         def normalize(text):
             return unidecode(text).lower().strip()
         
-        def score_match(product_name, search_terms):
-            product_name_norm = normalize(product_name)
+        def score_match(product_name: str, terms: list[str]) -> int:
+            """
+            Returns a score for how well a product_name matches any term from terms,
+            considering food-domain fallback rules.
+            """
+            name = product_name.lower()
         
-            if any(x in product_name_norm for x in [
-                "tempero", "mistura", "combo", "kit", "pronto", "congelado", "empanado", "frito", "defumado", "instantaneo"
-            ]):
-                return -1  # hard reject
-        
-            # Generic herb check: reject mixes
-            if re.search(r'\b(cheiro verde|ervas finas|ervas aromatizadas|tempero de ervas)\b', product_name_norm):
-                return -1
-        
-            # Garlic-specific: reject 'alho poró', powders
-            if "alho" in [normalize(term) for term in search_terms]:
-                if "poró" in product_name_norm or "po" in product_name_norm:
+            # Hard filters (reject before scoring)
+            forbidden_patterns = [
+                r'\b(palha|pré-frit[ao]|congelad[ao])\b',  # e.g., batata palha
+                r'\b(tempero|mistura|ervas finas|cheiro verde)\b',
+                r'\b(requeijão|cream cheese light|light cream|chantilly|doce em pedaço|doce de corte)\b',
+                r'\b(salsinha e cebolinha|alho e cebola|alho poró)\b',
+                r'\b(presunto|linguiça)\b',
+                r'\b(descascado|em pó|em flocos|em conserva|picado|triturado|ralado)\b',
+                r'\b(saleiro|frasco|pote plástico|refil|spray)\b'
+            ]
+            for pattern in forbidden_patterns:
+                if re.search(pattern, name):
                     return -1
         
-            # Parsley: reject compound or dehydrated if fresh mentioned
-            if "salsa" in [normalize(term) for term in search_terms]:
-                if "cheiro verde" in product_name_norm or "ervas" in product_name_norm:
-                    return -1
+            # Soft filter: promote terms like 'extra virgem' for olive oil
+            score_boost = 0
+            if "azeite" in name and "extra virgem" in name:
+                score_boost = 10
         
-            # Vinegar: prefer pure types
-            if "vinagre" in [normalize(term) for term in search_terms]:
-                if "balsamico" in product_name_norm:
-                    return 3
-                if "vinho branco" in product_name_norm:
-                    return 4
-                if "alcool" in product_name_norm:
-                    return 5
-                return 2  # fallback vinegar
-        
-            # Olive oil
-            if "azeite" in [normalize(term) for term in search_terms]:
-                if "extra virgem" in product_name_norm:
-                    return 5
-                if "virgem" in product_name_norm:
-                    return 3
-                return -1  # reject other types
-        
-            # Score match based on overlap
-            term_scores = []
-            for term in search_terms:
-                term_norm = normalize(term)
-                if term_norm in product_name_norm:
-                    term_scores.append(5)
-                elif all(word in product_name_norm for word in term_norm.split()):
-                    term_scores.append(3)
-                elif any(word in product_name_norm for word in term_norm.split()):
-                    term_scores.append(1)
-        
-            if not term_scores:
-                return 0
-            return max(term_scores)
+            # Fuzzy match against any term
+            best_score = max(fuzz.partial_ratio(term.lower(), name) for term in terms)
+            return best_score + score_boost
 
         seen_items = set()
 
