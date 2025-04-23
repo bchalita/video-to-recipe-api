@@ -12,7 +12,7 @@ import sqlite3
 import hashlib
 import yt_dlp
 from bs4 import BeautifulSoup
-import unidecode from unidecode
+from unidecode import unidecode
 
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
