@@ -15,3 +15,5 @@ torch==2.0.1+cpu
 torchvision==0.15.2
 Pillow
 beautifulsoup4
+rapidfuzz==3.6.1
+
