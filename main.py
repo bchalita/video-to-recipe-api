@@ -693,7 +693,7 @@ def rappi_cart_search(
                     soup = BeautifulSoup(response.text, "html.parser")
                     json_data = extract_next_data_json(soup)
 
-                    if json_data:
+                    else:
                         try:
                             fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
                             # 🛒 Log first 5 product titles for this search term
@@ -715,7 +715,7 @@ def rappi_cart_search(
                                     if not term_words or term_words[0] not in title:
                                         continue
 
-                                product_name = name_elem.get_text(strip=True)
+                                product_name = product.get("name", "").strip()                                
                                 ingredient_base = original.lower()
                                 score = score_match(product_name, [term], ingredient_base)
                                 
