@@ -582,7 +582,19 @@ def rappi_cart_search(
             fallback_prompt = [
                 {
                     "role": "system",
-                    "content": "You are a food product expert fluent in Brazilian Portuguese. Given an ingredient in English, return a list of up to 5 accurate Brazilian Portuguese product names for grocery store search. Thing as if you were a customer looking for this item, what would you input in the search bar? Use the full recipe to give context. Return only the list in JSON format. Do not explain."
+                    "content": (
+                                "You are a grocery search expert fluent in Brazilian Portuguese. "
+                                "Your task is to translate each English ingredient into up to 5 highly relevant Brazilian Portuguese product search terms. "
+                                "Think like a picky customer typing into the search bar — you want the most accurate, buyable item on the first try. "
+                                "Use context from the recipe to avoid irrelevant or generic items. " 
+                                "For example, you know from a steak frittes recipe that you are looking for a good cut of meat "
+                                "For example you know that a Tuna tartar will use the fresh tuna fish and not 'atum em lata'"
+                                "For example, always prioritize the item on its own, avoiding 'mixturas' or item combinations unless explicitily prompted to"
+                                "For example: do not return 'molho de tomate' for 'tomato', or 'alho poró' for 'garlic'. "
+                                "Stick to fresh, common supermarket terms unless otherwise clear from context. "
+                                "Given the 5 selections, be wise on which are the most relevant. "
+                                "Output only a valid JSON list of 5 or fewer strings. No explanation, no formatting, no commentary."
+                            )
                 },
             ]
 
