@@ -483,6 +483,16 @@ def rappi_cart_search(
             score_boost = 0
             if "azeite" in name and "extra virgem" in name:
                 score_boost = 10
+
+            if ingredient_base == "shallot":
+                name_lower = product_name.lower()
+                if "cebola roxa" in name_lower:
+                    return 70  # Soft match for purple onion
+                if "chalota" in name_lower:
+                    return 100  # Direct match
+                if "cebola" in name_lower:
+                    return 30  # Weak match fallback
+                return -1  # Otherwise reject
             if ingredient_base in ["steak", "bife"]:
                 name_lower = product_name.lower()
                 if any(term in name_lower for term in ["frango", "peito", "patinho", "músculo", "suíno", "linguiça"]):
@@ -551,6 +561,7 @@ def rappi_cart_search(
             
                         "[VEGETABLES]\n"
                         "- Onion: 'cebola amarela' > 'cebola branca'. Only use 'cebola roxa' in cold recipes.\n"
+                        "- Shallot: fallback to 'cebola roxa'. Reject: conservas, pastes, chopped, powder.\n"
                         "- Garlic: only whole cloves. Reject: 'alho poró', powder.\n"
                         "- Potatoes: only fresh whole 'batata inglesa'. Reject: frozen fries or mashed.\n"
                         "- Mushrooms: 'cogumelo paris' > 'portobello' > 'shitake' > 'ostra'. Reject 'champignon'.\n\n"
