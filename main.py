@@ -567,7 +567,6 @@ def rappi_cart_search(
                     if found:
                         break
                     if "zonasul.com.br" in url:
-                        store = "Zona Sul Direct"
                         try:
                             search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
