@@ -400,9 +400,9 @@ def rappi_cart_search(
 
         headers = {"User-Agent": "Mozilla/5.0"}
         store_urls = {
-            "Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
-            "Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
-            "Zona Sul Direct": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
+            "Rappi - Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
+            "Rappi - Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
+            "Zona Sul": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
         }
 
         store_carts = {store: [] for store in store_urls.keys()}
@@ -581,7 +581,7 @@ def rappi_cart_search(
                         soup = BeautifulSoup(response.text, "html.parser")
                         found = False
                 
-                        product_blocks = soup.select("article.vtex-product-summary-2-x-element")
+                        product_blocks = soup.select("li[data-qa^='product-item']")
                         logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
                 
                         product_candidates = []
@@ -621,7 +621,13 @@ def rappi_cart_search(
                             name = p["name"].strip()
                             price = float(str(p["price"]).replace(",", "."))
                             description = name.lower()
-                            image_url = p.get("image") or f"https://images.rappi.com.br/products/{p['image']}?e=webp…"
+                            image_raw = p.get("image", "")
+                            image_url = (
+                                image_raw
+                                if image_raw.startswith("http")
+                                else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
+                                if image_raw else None
+                            )
                             product_candidates.append({
                                 "name": name,
                                 "price": f"R$ {price:.2f}",
