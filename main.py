@@ -602,7 +602,6 @@ def rappi_cart_search(
                             
                             if not product_candidates:
                                 logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
-                                continue
                             
                             # 🔍 Ask GPT to select the best one
                             gpt_prompt = [
@@ -631,7 +630,6 @@ def rappi_cart_search(
                             
                             if chosen_name == "REJECT":
                                 logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ GPT rejected all products")
-                                continue
                             
                             # Match GPT's selected product to original candidate
                             chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
@@ -647,7 +645,7 @@ def rappi_cart_search(
                                     chosen_product = fallback_match
                                 else:
                                     logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
-                                    continue  # Safely skip without crashing or blocking the cart
+                                      # Safely skip without crashing or blocking the cart
                             
                         # You can now proceed to estimate quantity and cost using `chosen_product["raw_block"]
                             product_name = chosen_product["name"]
@@ -681,7 +679,7 @@ def rappi_cart_search(
                             key = (store, translated, product_name.lower())
                             if key in seen_items:
                                 logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔁 Already seen: {product_name}")
-                                continue
+                                
                             seen_items.add(key)
                             
                             store_carts[store].append({
@@ -707,7 +705,7 @@ def rappi_cart_search(
                             
                         except Exception as e:
                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
-                        continue
+                        
                         
                     if not found:
                         logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No acceptable product found for term '{term}'")
@@ -784,7 +782,7 @@ def rappi_cart_search(
                                     chosen_product = fallback_match
                                 else:
                                     logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
-                                    continue  # Safely skip without crashing or blocking the cart
+                                      # Safely skip without crashing or blocking the cart
                             # Extract chosen product info
                             product_name = chosen_product["name"]
                             product_block = chosen_product["raw_block"]
