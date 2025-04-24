@@ -635,9 +635,19 @@ def rappi_cart_search(
                             
                             # Match GPT's selected product to original candidate
                             chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
+                            
+                            # If not found, try fuzzy fallback
                             if not chosen_product:
-                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ GPT result '{chosen_name}' not found in product list")
-                                continue
+                                fallback_match = next(
+                                    (p for p in product_candidates if chosen_name.lower() in p["name"].lower()),
+                                    None
+                                )
+                                if fallback_match:
+                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ GPT exact match failed, using fuzzy match: {fallback_match['name']}")
+                                    chosen_product = fallback_match
+                                else:
+                                    logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
+                                    continue  # Safely skip without crashing or blocking the cart
                             
                         # You can now proceed to estimate quantity and cost using `chosen_product["raw_block"]
                             product_name = chosen_product["name"]
@@ -762,10 +772,19 @@ def rappi_cart_search(
                                 return
                     
                             chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
+                            
+                            # If not found, try fuzzy fallback
                             if not chosen_product:
-                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found in product list")
-                                return
-                    
+                                fallback_match = next(
+                                    (p for p in product_candidates if chosen_name.lower() in p["name"].lower()),
+                                    None
+                                )
+                                if fallback_match:
+                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ GPT exact match failed, using fuzzy match: {fallback_match['name']}")
+                                    chosen_product = fallback_match
+                                else:
+                                    logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
+                                    continue  # Safely skip without crashing or blocking the cart
                             # Extract chosen product info
                             product_name = chosen_product["name"]
                             product_block = chosen_product["raw_block"]
