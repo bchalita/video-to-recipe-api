@@ -766,44 +766,55 @@ def resend_rappi_cart():
 def get_recent_recipes(user_id: str):
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
 
-    # 1️⃣ Find the Airtable Users record whose "User ID" (text) = the passed UUID
-    user_lookup = requests.get(
+    # 1️⃣ Find the user’s Airtable record ID by matching your UUID against the
+    #    plain-text “User ID” field in the Users table.
+    user_resp = requests.get(
         f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}",
         headers=headers,
         params={"filterByFormula": f"{{User ID}} = '{user_id}'"}
     )
-    user_lookup.raise_for_status()
-    users = user_lookup.json().get("records", [])
+    user_resp.raise_for_status()
+    users = user_resp.json().get("records", [])
     if not users:
-        return []   # no such user → no recipes
+        # no such user, return empty
+        return []
 
-    airtable_user_record_id = users[0]["id"]
+    airtable_user_id = users[0]["id"]
 
-    # 2️⃣ Now fetch recipes whose linked-record field contains that record ID
-    params = {
-        "filterByFormula": f"FIND('{airtable_user_record_id}', ARRAYJOIN({{User ID}}))",
-        "sort[0][field]": "Created Time",
-        "sort[0][direction]": "desc",
-        "pageSize": 5
-    }
-    resp = requests.get(
+    # 2️⃣ Now fetch up to 5 recipes that link to that record ID. We build an OR(...)
+    #    formula on RECORD_ID() so Airtable only returns those recipe rows.
+    linked_recipe_ids = users[0]["fields"].get("Recipes", [])
+    if not linked_recipe_ids:
+        return []
+
+    # build a filter like OR(RECORD_ID()='recA',RECORD_ID()='recB',…)
+    or_clauses = ",".join(f"RECORD_ID()='{rid}'" for rid in linked_recipe_ids)
+    filter_formula = f"OR({or_clauses})"
+
+    recipes_resp = requests.get(
         f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
         headers=headers,
-        params=params
+        params={
+            "filterByFormula": filter_formula,
+            "sort[0][field]": "Created Time",
+            "sort[0][direction]": "desc",
+            "pageSize": 5
+        }
     )
-    resp.raise_for_status()
-    records = resp.json().get("records", [])
+    recipes_resp.raise_for_status()
 
     output = []
-    for r in records:
-        fields = r["fields"]
-        parsed = json.loads(fields.get("Recipe JSON","{}"))
+    for r in recipes_resp.json().get("records", []):
+        f = r["fields"]
+        # parse your JSON blob back into a dict
+        parsed = json.loads(f.get("Recipe JSON", "{}"))
         output.append({
             "id": r["id"],
-            "title": parsed.get("title", fields.get("Title")),
+            "title": parsed.get("title", f.get("Title")),
             "cook_time_minutes": parsed.get("cookTimeMinutes"),
             "ingredients": parsed.get("ingredients")
         })
+
     return output
 
 @app.get("/saved-recipes/{user_id}")
