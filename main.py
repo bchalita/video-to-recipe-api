@@ -764,38 +764,28 @@ def resend_rappi_cart():
 
 @app.get("/recent-recipes")
 def get_recent_recipes(user_id: str):
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    logger.info(f"[recent-recipes] start for user_id={user_id}")
-
-    # 1) Lookup the Airtable user record
-    user_params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-    logger.debug(f"[recent-recipes] Users query params: {user_params}")
-    user_resp = requests.get(
-        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}",
+    # 1) find Airtable record-id for this Auth0 user
+    user_lookup = requests.get(
+        f"https://api.airtable.com/v0/{BASE}/{USERS_TABLE}",
         headers=headers,
-        params=user_params,
-    )
-    logger.debug(f"[recent-recipes] Users status: {user_resp.status_code}")
-    users_json = user_resp.json()
-    logger.debug(f"[recent-recipes] Users response body: {users_json}")
-
-    if user_resp.status_code != 200 or not users_json.get("records"):
+        params={"filterByFormula": f"{{User ID}} = '{user_id}'"}
+    ).json()
+    if not user_lookup["records"]:
         logger.warning(f"[recent-recipes] no Airtable user found for {user_id}")
         return []
+    airtable_user_record_id = user_lookup["records"][0]["id"]
 
-    airtable_user = users_json["records"][0]
-    airtable_user_id = airtable_user["id"]
-    logger.info(f"[recent-recipes] Airtable record ID = {airtable_user_id}")
-
-    # 2) Fetch Recipes linked to that user record
-    #    ⚠️ Adjust this to match *where* you actually store the link.
-    #    If your Recipes table has a LINKED RECORD field called "User ID":
-    recipe_params = {
-        "filterByFormula": f"FIND('{airtable_user_id}', ARRAYJOIN({{User ID}}))",
+    # 2) now fetch recipes linked to that record-id
+    resp = requests.get(
+      f"https://api.airtable.com/v0/{BASE}/{RECIPES_TABLE}",
+      headers=headers,
+      params={
+        "filterByFormula": f"FIND('{airtable_user_record_id}', ARRAYJOIN({{User ID}}))",
         "sort[0][field]": "Created Time",
         "sort[0][direction]": "desc",
-        "pageSize": 5,
-    }
+        "pageSize": 5
+      }
+    )
     logger.debug(f"[recent-recipes] Recipes query params: {recipe_params}")
     recipes_resp = requests.get(
         f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
