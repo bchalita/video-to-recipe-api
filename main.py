@@ -399,9 +399,15 @@ def rappi_cart_search(
         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
 
         headers = {"User-Agent": "Mozilla/5.0"}
+        
+        
+        #####HIDDEN FOR NOW (JUST ADD BACK TO DICTIONARY)
+
+        # "Rappi - Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
+        # "Rappi - Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
+        
+        
         store_urls = {
-            "Rappi - Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
-            "Rappi - Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
             "Zona Sul": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
         }
 
