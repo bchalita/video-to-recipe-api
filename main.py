@@ -691,29 +691,34 @@ def rappi_cart_search(
                     qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
                     if qm:
                         val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
-                        factor = {"kg":1000,"g":1,"unidade":1}.get(unit,1)
+                        factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
                         quantity_per_unit = int(val * factor)
                     else:
                         quantity_per_unit = 500
-        
-                    units_needed = (
-                        max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                        if estimated_needed_val else 1
-                    )
+                    
+                    # --- EXPLICIT None check here ---
+                    if estimated_needed_val is not None:
+                        units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                        excess = total_quantity - estimated_needed_val  # use below
+                        # build display with the "~g" suffix
+                        needed_display = (
+                            format_unit_display(quantity_needed_val, quantity_needed_unit)
+                            + f" (~{int(estimated_needed_val)}g)"
+                        )
+                    else:
+                        units_needed = 1
+                        excess = None
+                        needed_display = quantity_needed_raw or ""
+                    
                     total_cost = units_needed * price
                     total_quantity = units_needed * quantity_per_unit
-        
-                    needed_display = (
-                        format_unit_display(quantity_needed_val, quantity_needed_unit)
-                        + (f" (~{int(estimated_needed_val)}g)" if estimated_needed_val else "")
-                    ) or quantity_needed_raw
-        
+                    
                     key = (store, translated, product_name.lower())
                     if key in seen_items:
                         logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
                         continue
                     seen_items.add(key)
-        
+                    
                     store_carts[store].append({
                         "ingredient": original,
                         "translated": translated,
@@ -728,12 +733,12 @@ def rappi_cart_search(
                         "units_to_buy": units_needed,
                         "total_quantity_added": total_quantity,
                         "total_cost": f"R$ {total_cost:.2f}",
-                        "excess_quantity": (total_quantity - estimated_needed_val)
-                                          if estimated_needed_val else None
+                        "excess_quantity": excess
                     })
                     logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
-        
+                    
                     found = True
+
         
                 # 5️⃣ After we’ve exhausted all terms for this store…
                 if not found:
