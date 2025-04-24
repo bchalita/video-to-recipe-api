@@ -581,7 +581,7 @@ def rappi_cart_search(
                         soup = BeautifulSoup(response.text, "html.parser")
                         found = False
                 
-                        product_blocks = soup.select("li[data-qa^='product-item']")
+                        product_blocks = soup.select("article.vtex-product-summary-2-x-element")
                         logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
                 
                         product_candidates = []
