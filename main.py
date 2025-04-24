@@ -457,64 +457,6 @@ def rappi_cart_search(
             # 🔍 Log the full search terms being used for this ingredient
             logger.info(f"[rappi-cart][{original}] Search terms (base + fallback): {search_terms}")
 
-
-            # fallback_prompt = [
-            #     {
-            #         "role": "system",
-            #         "content": (
-            #             "You are a food product expert fluent in Brazilian Portuguese. "
-            #             "Strictly follow these fallback rules when given an ingredient name. "
-            #             "Output only a raw JSON list (no explanation, no formatting) with up to 5 product name alternatives in Brazilian Portuguese. If none apply, return [].\n\n"
-            
-            #             "General rules:\n"
-            #             "- Prefer: fresh > refrigerated > shelf-stable > frozen > canned > powdered.\n"
-            #             "- Reject any item with: 'mistura', 'tempero', 'kit', 'combo', or seasoning blends unless explicitly requested.\n"
-            #             "- Reject: frozen, chopped, pre-cooked, or powdered unless context clearly allows it.\n"
-            #             "- Accept singular/plural/root variants (e.g., 'alho' for 'dentes de alho', 'cebola' for 'cebolas').\n"
-            
-            #             "Category rules:\n\n"
-            
-            #             "[HERBS]\n"
-            #             "- Only pure herb items. Reject: 'cheiro verde', 'ervas finas', mixed herbs.\n"
-            #             "- Reject powdered/dried unless fallback allows.\n"
-            #             "- Parsley → 'salsinha'.\n"
-            #             "- Basil → 'manjericão fresco' only.\n"
-            #             "- Thyme → only pure 'tomilho'.\n"
-            #             "- Rosemary, cilantro, oregano, bay leaf → same rules apply: single-ingredient, unblended.\n\n"
-            
-            #             "[MEAT]\n"
-            #             "- Steak → fallback must have: 'bife de contrafilé', 'bife ancho', 'alcatra', 'coxão mole', or 'filé mignon'; reject chicken, pork, overly processed beef, tough meets like patinho or if 'file de peito' is in the name\n"
-            #             "- Ground meat: default to 'carne moída bovina'. Accept 'suína' or 'frango' if specified.\n"
-            #             "- Pancetta: fallback to 'bacon em cubos' or 'fatiado'. Reject: 'presunto', 'linguiça'.\n"
-            #             "- Shrimp: 'camarão rosa' or 'cinza', peeled preferred. Reject: breaded/fried/precooked.\n\n"
-            
-            #             "[DAIRY]\n"
-            #             "- Cream: only 'creme de leite fresco'.\n"
-            #             "- Sour cream → 'nata' or 'creme de leite com limão'.\n"
-            #             "- Heavy/double cream → 'creme de leite fresco'.\n"
-            #             "- Cream cheese → only if labeled. Fallback: 'requeijão cremoso' for spreading.\n"
-            #             "- Parmesan rind: must be solid cheese with rind. Reject grated or powder.\n\n"
-            
-            #             "[VEGETABLES]\n"
-            #             "- Onion: 'cebola amarela' > 'cebola branca'. Only use 'cebola roxa' in cold recipes.\n"
-            #             "- Shallot: fallback to 'cebola roxa'. Reject: conservas, pastes, chopped, powder.\n"
-            #             "- Garlic: only whole cloves. Reject: 'alho poró', powder.\n"
-            #             "- Potatoes: only fresh whole 'batata inglesa'. Reject: frozen fries or mashed.\n"
-            #             "- Mushrooms: 'cogumelo paris' > 'portobello' > 'shitake' > 'ostra'. Reject 'champignon'.\n\n"
-            
-            #             "[PANTRY ITEMS]\n"
-            #             "- Olive oil: only 'azeite de oliva extra virgem'.\n"
-            #             "- Vinegar: fallback order: 'vinagre de maça', 'vinagre de álcool' > 'vinagre de vinho branco'\n"
-            #             "- Cacao powder: only 'cacau 100%' or 'cacau alcalino'. Reject: 'achocolatado', 'Nescau'.\n"
-            #             "- Flour: only 'farinha de trigo'. Reject: cake mixes, 'para empanar', 'farinha de rosca'.\n"
-            #             "- Pasta: match format (e.g. 'espaguete', 'penne', 'fusilli'). Fallback: 'massa tipo espaguete'.\n\n"
-            
-            #             "[CUISINE CONTEXT]\n"
-            #             "- Asian: prioritize 'shoyu', 'gengibre', 'óleo de gergelim', 'arroz japonês'.\n"
-            #             "- Italian: prioritize 'parmesão', 'muçarela', 'azeite', 'manjericão fresco'."
-            #         )
-            #     }
-            # ]
             fallback_prompt = [
                 {
                     "role": "system",
@@ -522,6 +464,9 @@ def rappi_cart_search(
                                 "You are a grocery search expert fluent in Brazilian Portuguese. "
                                 "Your task is to translate each English ingredient into up to 5 highly relevant Brazilian Portuguese product search terms. "
                                 "Think like a picky customer typing into the search bar — you want the most accurate, buyable item on the first try. "
+                                "- **First term must be the singular root** of the ingredient (e.g. 'alho' for 'garlic').  \n"
+                                "- Then more specific forms ('alho fresco', 'alho descascado') if needed.  \n"
+                                "- **Do not** include words that clash with non-food categories (e.g. 'dentes').  \n"
                                 "Use context from the recipe to avoid irrelevant or generic items. " 
                                 "For example, you know from a steak frittes recipe that you are looking for a good cut of meat "
                                 "For example you know that a Tuna tartar will use the fresh tuna fish and not 'atum em lata'"
@@ -573,7 +518,8 @@ def rappi_cart_search(
         
                     # 1️⃣ Build the list of raw product dicts:
                     product_candidates = []
-        
+
+                    ### USE ZONA SUL ONLY FOR NOW
                     if "zonasul.com.br" in url:
                         search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
                         logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
@@ -610,32 +556,35 @@ def rappi_cart_search(
                         if not product_candidates:
                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
 
-                    else:
-                        # — your existing Rappi JSON logic (Pão de Açúcar) —
-                        response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
-                        json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
-                        if not json_data:
-                            continue
-                        fallback = json_data["props"]["pageProps"]["fallback"]
-                        for p in iterate_fallback_products(fallback):
-                            name = p["name"].strip()
-                            price = float(str(p["price"]).replace(",", "."))
-                            description = name.lower()
-                            image_raw = p.get("image", "")
-                            image_url = (
-                                image_raw
-                                if image_raw.startswith("http")
-                                else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
-                                if image_raw else None
-                            )
-                            product_candidates.append({
-                                "name": name,
-                                "price": f"R$ {price:.2f}",
-                                "description": description,
-                                "image_url": image_url,
-                                "raw_block": p
-                            })
-                        # (log & continue if product_candidates is empty)
+
+
+                    ##### COMMENTING ON RAPPI SEARCH TO OPTIMIZE TESTING. WILL REVERT BACK LATER
+                    # else:
+                    #     # — your existing Rappi JSON logic (Pão de Açúcar) —
+                    #     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                    #     json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
+                    #     if not json_data:
+                    #         continue
+                    #     fallback = json_data["props"]["pageProps"]["fallback"]
+                    #     for p in iterate_fallback_products(fallback):
+                    #         name = p["name"].strip()
+                    #         price = float(str(p["price"]).replace(",", "."))
+                    #         description = name.lower()
+                    #         image_raw = p.get("image", "")
+                    #         image_url = (
+                    #             image_raw
+                    #             if image_raw.startswith("http")
+                    #             else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
+                    #             if image_raw else None
+                    #         )
+                    #         product_candidates.append({
+                    #             "name": name,
+                    #             "price": f"R$ {price:.2f}",
+                    #             "description": description,
+                    #             "image_url": image_url,
+                    #             "raw_block": p
+                    #         })
+                    #     # (log & continue if product_candidates is empty)
         
                     if not product_candidates:
                         logger.warning(f"[rappi-cart][{original} @ {store}] ❌ no candidates for term '{term}'")
