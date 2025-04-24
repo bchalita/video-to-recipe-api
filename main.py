@@ -765,56 +765,67 @@ def resend_rappi_cart():
 @app.get("/recent-recipes")
 def get_recent_recipes(user_id: str):
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    logger.info(f"[recent-recipes] start for user_id={user_id}")
 
-    # 1️⃣ Find the user’s Airtable record ID by matching your UUID against the
-    #    plain-text “User ID” field in the Users table.
+    # 1) Lookup the Airtable user record
+    user_params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
+    logger.debug(f"[recent-recipes] Users query params: {user_params}")
     user_resp = requests.get(
         f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}",
         headers=headers,
-        params={"filterByFormula": f"{{User ID}} = '{user_id}'"}
+        params=user_params,
     )
-    user_resp.raise_for_status()
-    users = user_resp.json().get("records", [])
-    if not users:
-        # no such user, return empty
+    logger.debug(f"[recent-recipes] Users status: {user_resp.status_code}")
+    users_json = user_resp.json()
+    logger.debug(f"[recent-recipes] Users response body: {users_json}")
+
+    if user_resp.status_code != 200 or not users_json.get("records"):
+        logger.warning(f"[recent-recipes] no Airtable user found for {user_id}")
         return []
 
-    airtable_user_id = users[0]["id"]
+    airtable_user = users_json["records"][0]
+    airtable_user_id = airtable_user["id"]
+    logger.info(f"[recent-recipes] Airtable record ID = {airtable_user_id}")
 
-    # 2️⃣ Now fetch up to 5 recipes that link to that record ID. We build an OR(...)
-    #    formula on RECORD_ID() so Airtable only returns those recipe rows.
-    linked_recipe_ids = users[0]["fields"].get("Recipes", [])
-    if not linked_recipe_ids:
-        return []
-
-    # build a filter like OR(RECORD_ID()='recA',RECORD_ID()='recB',…)
-    or_clauses = ",".join(f"RECORD_ID()='{rid}'" for rid in linked_recipe_ids)
-    filter_formula = f"OR({or_clauses})"
-
+    # 2) Fetch Recipes linked to that user record
+    #    ⚠️ Adjust this to match *where* you actually store the link.
+    #    If your Recipes table has a LINKED RECORD field called "User ID":
+    recipe_params = {
+        "filterByFormula": f"FIND('{airtable_user_id}', ARRAYJOIN({{User ID}}))",
+        "sort[0][field]": "Created Time",
+        "sort[0][direction]": "desc",
+        "pageSize": 5,
+    }
+    logger.debug(f"[recent-recipes] Recipes query params: {recipe_params}")
     recipes_resp = requests.get(
         f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
         headers=headers,
-        params={
-            "filterByFormula": filter_formula,
-            "sort[0][field]": "Created Time",
-            "sort[0][direction]": "desc",
-            "pageSize": 5
-        }
+        params=recipe_params,
     )
-    recipes_resp.raise_for_status()
+    logger.debug(f"[recent-recipes] Recipes status: {recipes_resp.status_code}")
+    recipes_json = recipes_resp.json()
+    logger.debug(f"[recent-recipes] Recipes response body: {recipes_json}")
+
+    if recipes_resp.status_code != 200:
+        logger.error("[recent-recipes] Airtable request failed")
+        raise HTTPException(500, "Failed to fetch recent recipes")
 
     output = []
-    for r in recipes_resp.json().get("records", []):
-        f = r["fields"]
-        # parse your JSON blob back into a dict
-        parsed = json.loads(f.get("Recipe JSON", "{}"))
+    for r in recipes_json.get("records", []):
+        f = r.get("fields", {})
+        try:
+            parsed = json.loads(f.get("Recipe JSON", "{}"))
+        except Exception as e:
+            logger.warning(f"[recent-recipes] JSON parse error: {e}")
+            parsed = {}
         output.append({
             "id": r["id"],
             "title": parsed.get("title", f.get("Title")),
             "cook_time_minutes": parsed.get("cookTimeMinutes"),
-            "ingredients": parsed.get("ingredients")
+            "ingredients": parsed.get("ingredients"),
         })
 
+    logger.info(f"[recent-recipes] returning {len(output)} recipes")
     return output
 
 @app.get("/saved-recipes/{user_id}")
