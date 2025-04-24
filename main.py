@@ -561,13 +561,20 @@ def rappi_cart_search(
             quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
             estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
 
-            for store, url in store_urls.items():
-                found = False
-                for term in search_terms:
-                    if found:
-                        break
-                    if "zonasul.com.br" in url:
-                        try:
+
+            #### NEW VERSION OF LOOP
+                for store, url in store_urls.items():
+                    found = False
+            
+                    # try each search term in turn until we append one product
+                    for term in search_terms:
+                        if found:
+                            break
+            
+                        # 1️⃣ Build the list of raw product dicts:
+                        product_candidates = []
+            
+                        if "zonasul.com.br" in url:
                             search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
                             logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
                             response = requests.get(search_url, headers=headers, timeout=10)
@@ -602,236 +609,135 @@ def rappi_cart_search(
                             
                             if not product_candidates:
                                 logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
-                            
-                            # 🔍 Ask GPT to select the best one
-                            gpt_prompt = [
-                                {"role": "system", "content": (
-                                    "You're helping someone shop online for groceries in Brazil. "
-                                    "From the list of available products, select the **single** best match for the ingredient mentioned. "
-                                    "Reply only with the product name. If none are acceptable, return 'REJECT'."
-                                )},
-                                {"role": "user", "content": (
-                                    f"Ingredient: {original}\n\n"
-                                    f"Available products:\n" + 
-                                    "\n".join([f"{i+1}. {p['name']} — {p['price']} — {p['description']}" for i, p in enumerate(product_candidates)]) +
-                                    "\n\nWhich product should be used?"
-                                )}
-                            ]
-                            
-                            response = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=gpt_prompt,
-                                temperature=0,
-                                max_tokens=50
-                            )
-                            
-                            chosen_name = response.choices[0].message.content.strip()
-                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧠 GPT chose: {chosen_name}")
-                            
-                            if chosen_name == "REJECT":
-                                logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ GPT rejected all products")
-                            
-                            # Match GPT's selected product to original candidate
-                            chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
-                            
-                            # If not found, try fuzzy fallback
-                            if not chosen_product:
-                                fallback_match = next(
-                                    (p for p in product_candidates if chosen_name.lower() in p["name"].lower()),
-                                    None
-                                )
-                                if fallback_match:
-                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ GPT exact match failed, using fuzzy match: {fallback_match['name']}")
-                                    chosen_product = fallback_match
-                                else:
-                                    logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
-                                      # Safely skip without crashing or blocking the cart
-                            
-                        # You can now proceed to estimate quantity and cost using `chosen_product["raw_block"]
-                            product_name = chosen_product["name"]
-                            product_block = chosen_product["raw_block"]
-                            image_url = chosen_product["image_url"]
-                            price_text = chosen_product["price"].replace("R$", "").strip()
-                            price = float(price_text.replace(",", "."))
-                            
-                            # You can use the same quantity regex from before, applied to the chosen product
-                            quantity_match = re.search(r"(\d+(?:[.,]\d+)?)(\s?)(kg|g|unidade|un)", product_name.lower())
-                            if quantity_match:
-                                val = float(quantity_match.group(1).replace(",", "."))
-                                unit = quantity_match.group(3).lower()
-                                factor = {"kg": 1000, "g": 1, "un": 1, "unidade": 1}.get(unit, 1)
-                                quantity_per_unit = int(val * factor)
-                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 📦 Parsed quantity: {quantity_per_unit}g from '{quantity_match.group(0)}'")
-                            else:
-                                quantity_per_unit = 500
-                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No quantity match, using default: {quantity_per_unit}g")
-                            
-                            units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999)) if estimated_needed_val else 1
-                            total_cost = units_needed * price
-                            total_quantity = units_needed * quantity_per_unit
-                            
-                            needed_display = (
-                                format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                + f" (~{int(estimated_needed_val)}g)"
-                                if quantity_needed_val else quantity_needed_raw or ""
-                            )
-                            
-                            key = (store, translated, product_name.lower())
-                            if key in seen_items:
-                                logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🔁 Already seen: {product_name}")
-                                
-                            seen_items.add(key)
-                            
-                            store_carts[store].append({
-                                "ingredient": original,
-                                "translated": translated,
-                                "product_name": product_name,
-                                "price": f"R$ {price:.2f}",
-                                "image_url": image_url,
-                                "quantity_needed": quantity_needed_raw,
-                                "quantity_needed_display": needed_display,
-                                "quantity_unit": "",
-                                "quantity_per_unit": quantity_per_unit,
-                                "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
-                                "units_to_buy": units_needed,
-                                "total_quantity_added": total_quantity,
-                                "total_cost": f"R$ {total_cost:.2f}",
-                                "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
-                            })
-                            logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ✅ Added: {product_name}")
 
-                            found = True
-                            break
-                            
-                        except Exception as e:
-                            logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ Error fetching products: {e}")
-                        
-                        
-                    if not found:
-                        logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ⚠️ No acceptable product found for term '{term}'")
-                    
-                    response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
-                    soup = BeautifulSoup(response.text, "html.parser")
-                    json_data = extract_next_data_json(soup)
-
-                    if json_data:
-                        try:
-                            fallback = json_data.get("props", {}).get("pageProps", {}).get("fallback", {})
-                            product_candidates = []
-                    
-                            preview = list(iterate_fallback_products(fallback))[:5]
-                            logger.info(f"[rappi-cart][{original} @ {store} / term: {term}] First 5 fallback results: {[p.get('name') for p in preview]}")
-                    
-                            for product in iterate_fallback_products(fallback):
-                                name = product.get("name", "").strip()
+                        else:
+                            # — your existing Rappi JSON logic (Pão de Açúcar) —
+                            response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                            json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
+                            if not json_data:
+                                continue
+                            fallback = json_data["props"]["pageProps"]["fallback"]
+                            for p in iterate_fallback_products(fallback):
+                                name = p["name"].strip()
+                                price = float(str(p["price"]).replace(",", "."))
                                 description = name.lower()
-                                price = float(str(product.get("price", "0")).replace(",", "."))
-                                image_raw = product.get("image")
-                                image_url = image_raw if image_raw and image_raw.startswith("http") else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
-                    
+                                image_url = p.get("image") or f"https://images.rappi.com.br/products/{p['image']}?e=webp…"
                                 product_candidates.append({
                                     "name": name,
                                     "price": f"R$ {price:.2f}",
                                     "description": description,
                                     "image_url": image_url,
-                                    "raw_block": product
+                                    "raw_block": p
                                 })
-                    
-                            if not product_candidates:
-                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ No viable products to evaluate with GPT.")
-                    
-                            # GPT selection
-                            gpt_prompt = [
-                                {"role": "system", "content": (
-                                    "You're helping someone shop online for groceries in Brazil. "
-                                    "From the list of available products, select the **single** best match for the ingredient mentioned. "
-                                    "Reply only with the product name. If none are acceptable, return 'REJECT'."
-                                )},
-                                {"role": "user", "content": (
-                                    f"Ingredient: {original}\n\n"
-                                    f"Available products:\n" + 
-                                    "\n".join([f"{i+1}. {p['name']} — {p['price']} — {p['description']}" for i, p in enumerate(product_candidates)]) +
-                                    "\n\nWhich product should be used?"
-                                )}
-                            ]
-                    
-                            response = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=gpt_prompt,
-                                temperature=0,
-                                max_tokens=50
-                            )
-                    
-                            chosen_name = response.choices[0].message.content.strip()
-                            logger.info(f"[rappi-cart][{original} @ {store}] 🧠 GPT chose: {chosen_name}")
-                    
-                            if chosen_name == "REJECT":
-                                logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT rejected all products")
-                                return
-                    
-                            chosen_product = next((p for p in product_candidates if p["name"] == chosen_name), None)
-                            
-                            # If not found, try fuzzy fallback
-                            if not chosen_product:
-                                fallback_match = next(
-                                    (p for p in product_candidates if chosen_name.lower() in p["name"].lower()),
-                                    None
+                            # (log & continue if product_candidates is empty)
+            
+                        if not product_candidates:
+                            logger.warning(f"[rappi-cart][{original} @ {store}] ❌ no candidates for term '{term}'")
+                            continue
+            
+                        # 2️⃣ Ask GPT to pick exactly one of them:
+                        gpt_prompt = [
+                            {"role": "system", "content": (
+                                "You're helping someone shop online for groceries in Brazil. "
+                                "From the list of available products, select the **single** best match "
+                                "for the ingredient mentioned. Reply only with the product name. "
+                                "If none are acceptable, return 'REJECT'."
+                            )},
+                            {"role": "user", "content": (
+                                f"Ingredient: {original}\n\n"
+                                "Available products:\n" +
+                                "\n".join(
+                                    f"{i+1}. {c['name']} — {c['price']} — {c['description']}"
+                                    for i, c in enumerate(product_candidates)
                                 )
-                                if fallback_match:
-                                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ GPT exact match failed, using fuzzy match: {fallback_match['name']}")
-                                    chosen_product = fallback_match
-                                else:
-                                    logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found or matchable")
-                                      # Safely skip without crashing or blocking the cart
-                            # Extract chosen product info
-                            product_name = chosen_product["name"]
-                            product_block = chosen_product["raw_block"]
-                            price_text = chosen_product["price"].replace("R$", "").strip()
-                            price = float(price_text.replace(",", "."))
-                            image_url = chosen_product["image_url"]
-                            unit_type = product_block.get("unitType", "")
-                            quantity_per_unit = product_block.get("quantity", 1)
-                    
-                            if estimated_needed_val and unit_type in ["kg", "g", "ml", "l"]:
-                                units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                            else:
-                                units_needed = 1
-                    
-                            total_cost = units_needed * price
-                            total_quantity = units_needed * quantity_per_unit
-                    
-                            needed_display = (
-                                format_unit_display(quantity_needed_val, quantity_needed_unit)
-                                + f" (~{int(estimated_needed_val)}g)"
-                                if quantity_needed_val else quantity_needed_raw or ""
+                            )}
+                        ]
+                        response = client.chat.completions.create(
+                            model="gpt-4o",
+                            messages=gpt_prompt,
+                            temperature=0,
+                            max_tokens=50
+                        )
+                        chosen_name = response.choices[0].message.content.strip()
+                        logger.info(f"[rappi-cart][{original} @ {store}] 🧠 GPT chose: {chosen_name}")
+            
+                        if chosen_name == "REJECT":
+                            logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT rejected all products")
+                            continue
+            
+                        # 3️⃣ Match GPT’s pick back to our candidate list:
+                        chosen_product = next((c for c in product_candidates if c["name"] == chosen_name), None)
+                        if not chosen_product:
+                            # fallback fuzzy:
+                            chosen_product = next(
+                                (c for c in product_candidates if chosen_name.lower() in c["name"].lower()),
+                                None
                             )
-                    
-                            key = (store, translated, product_name.lower())
-                            if key in seen_items:
-                                logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
-                                return
-                            seen_items.add(key)
-                    
-                            store_carts[store].append({
-                                "ingredient": original,
-                                "translated": translated,
-                                "product_name": product_name,
-                                "price": f"R$ {price:.2f}",
-                                "image_url": image_url,
-                                "quantity_needed": quantity_needed_raw,
-                                "quantity_needed_display": needed_display,
-                                "quantity_unit": unit_type,
-                                "quantity_per_unit": quantity_per_unit,
-                                "display_quantity_per_unit": format_unit_display(quantity_per_unit, unit_type),
-                                "units_to_buy": units_needed,
-                                "total_quantity_added": total_quantity,
-                                "total_cost": f"R$ {total_cost:.2f}",
-                                "excess_quantity": (total_quantity - estimated_needed_val) if estimated_needed_val else None
-                            })
-                            logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
-                    
-                        except Exception as e:
-                            logger.warning(f"[rappi-cart] Failed to parse fallback product info: {e}")
+                            if chosen_product:
+                                logger.warning(
+                                    f"[rappi-cart][{original} @ {store}] ⚠️ using fuzzy fallback for '{chosen_name}'"
+                                )
+                            else:
+                                logger.warning(
+                                    f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found"
+                                )
+                                continue
+            
+                        # 4️⃣ Now compute quantity & cost exactly as before:
+                        product_name = chosen_product["name"]
+                        price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
+                        
+                        # extract quantity_per_unit via regex on product_name or raw_block…
+                        qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
+                        if qm:
+                            val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
+                            factor = {"kg":1000,"g":1,"unidade":1}.get(unit,1)
+                            quantity_per_unit = int(val * factor)
+                        else:
+                            quantity_per_unit = 500
+            
+                        units_needed = (
+                            max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                            if estimated_needed_val else 1
+                        )
+                        total_cost = units_needed * price
+                        total_quantity = units_needed * quantity_per_unit
+            
+                        needed_display = (
+                            format_unit_display(quantity_needed_val, quantity_needed_unit)
+                            + (f" (~{int(estimated_needed_val)}g)" if estimated_needed_val else "")
+                        ) or quantity_needed_raw
+            
+                        key = (store, translated, product_name.lower())
+                        if key in seen_items:
+                            logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
+                            continue
+                        seen_items.add(key)
+            
+                        store_carts[store].append({
+                            "ingredient": original,
+                            "translated": translated,
+                            "product_name": product_name,
+                            "price": f"R$ {price:.2f}",
+                            "image_url": chosen_product["image_url"],
+                            "quantity_needed": quantity_needed_raw,
+                            "quantity_needed_display": needed_display,
+                            "quantity_unit": "",
+                            "quantity_per_unit": quantity_per_unit,
+                            "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+                            "units_to_buy": units_needed,
+                            "total_quantity_added": total_quantity,
+                            "total_cost": f"R$ {total_cost:.2f}",
+                            "excess_quantity": (total_quantity - estimated_needed_val)
+                                              if estimated_needed_val else None
+                        })
+                        logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
+            
+                        found = True
+            
+                    # 5️⃣ After we’ve exhausted all terms for this store…
+                    if not found:
+                        logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No acceptable product found for any term")
         
         for store, items in store_carts.items():
             logger.info(f"[Cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
