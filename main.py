@@ -665,14 +665,18 @@ def rappi_cart_search(
                         max_tokens=50
                     )
                     chosen_name = response.choices[0].message.content.strip()
-                    logger.info(f"[rappi-cart][{original} @ {store}] 🧠 GPT chose: {chosen_name}")
-        
-                    if chosen_name == "REJECT":
-                        logger.warning(f"[rappi-cart][{original} @ {store}] ❌ GPT rejected all products")
-                        continue
-        
-                    # 3️⃣ Match GPT’s pick back to our candidate list:
-                    chosen_product = next((c for c in product_candidates if c["name"] == chosen_name), None)
+                    logger.info(f"[{original} @ {store}] 🧠 GPT chose: {chosen_name}")
+                    
+                    # If GPT rejects everything, or we can't match its exact string,
+                    # fall back to the very first candidate in your scraped list:
+                    if chosen_name == "REJECT" or not any(p["name"] == chosen_name for p in product_candidates):
+                        if chosen_name == "REJECT":
+                            logger.warning(f"[{original} @ {store}] ❌ GPT rejected all products – falling back to top result")
+                        else:
+                            logger.warning(f"[{original} @ {store}] ⚠️ GPT result '{chosen_name}' not found – falling back to top result")
+                        chosen_product = product_candidates[0]
+                    else:
+                        chosen_product = next(p for p in product_candidates if p["name"] == chosen_name)
                     if not chosen_product:
                         # fallback fuzzy:
                         chosen_product = next(
