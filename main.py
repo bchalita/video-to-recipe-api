@@ -764,35 +764,46 @@ def resend_rappi_cart():
 
 @app.get("/recent-recipes")
 def get_recent_recipes(user_id: str):
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+
+    # 1️⃣ Find the Airtable Users record whose "User ID" (text) = the passed UUID
+    user_lookup = requests.get(
+        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}",
+        headers=headers,
+        params={"filterByFormula": f"{{User ID}} = '{user_id}'"}
+    )
+    user_lookup.raise_for_status()
+    users = user_lookup.json().get("records", [])
+    if not users:
+        return []   # no such user → no recipes
+
+    airtable_user_record_id = users[0]["id"]
+
+    # 2️⃣ Now fetch recipes whose linked-record field contains that record ID
     params = {
-        "filterByFormula": f"FIND('{user_id}', ARRAYJOIN({{User ID}}))",
+        "filterByFormula": f"FIND('{airtable_user_record_id}', ARRAYJOIN({{User ID}}))",
         "sort[0][field]": "Created Time",
         "sort[0][direction]": "desc",
         "pageSize": 5
     }
+    resp = requests.get(
+        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
+        headers=headers,
+        params=params
+    )
+    resp.raise_for_status()
+    records = resp.json().get("records", [])
 
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch recent recipes")
-
-    records = response.json().get("records", [])
     output = []
     for r in records:
-        fields = r.get("fields", {})
-        try:
-            parsed_json = json.loads(fields.get("Recipe JSON", "{}"))
-            output.append({
-                "id": r["id"],
-                "title": parsed_json.get("title", fields.get("Title")),
-                "cook_time_minutes": parsed_json.get("cookTimeMinutes"),
-                "ingredients": parsed_json.get("ingredients")
-            })
-        except Exception as e:
-            logger.warning(f"[recent-recipes] Failed to parse recipe JSON: {e}")
-            continue
-    logger.info(f"[recent-recipes] Parsed output: {json.dumps(output, indent=2, ensure_ascii=False)}")
+        fields = r["fields"]
+        parsed = json.loads(fields.get("Recipe JSON","{}"))
+        output.append({
+            "id": r["id"],
+            "title": parsed.get("title", fields.get("Title")),
+            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "ingredients": parsed.get("ingredients")
+        })
     return output
 
 @app.get("/saved-recipes/{user_id}")
