@@ -135,34 +135,33 @@ def login(user: UserLogin = Body(...)):
     """
     Authenticate a user against Airtable.
     """
-    headers = {
-        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
-    }
-    params = {
-        "filterByFormula": f"{{Email}} = '{user.email}'"
-    }
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-    resp = requests.get(url, headers=headers, params=params)
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    params  = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    url     = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    resp    = requests.get(url, headers=headers, params=params)
+
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
-    
     records = resp.json().get("records", [])
     if not records:
         raise HTTPException(status_code=404, detail="User not found")
-    
-    record = records[0]["fields"]  # <- YOU NEED THIS LINE
-    airtable_record = records[0]   # also keeping the full record for ID mapping
 
+    airtable_record = records[0]
+    record          = airtable_record["fields"]
+
+    # verify password
     hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
     if record.get("Password") != hashed_input:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-    
-    # Mapping user IDs
+
+    # grab your “external” UUID from the linked User ID field
     real_uuid = record.get("User ID")
     if not real_uuid:
         raise HTTPException(status_code=500, detail="No external UID on user record")
-    
+
+    # map the Airtable recordID → your external UUID
     AUTH_UID_MAP[airtable_record["id"]] = real_uuid
+    logging.info(f"[login] mapped {airtable_record['id']} → {real_uuid}")
 
     return {
         "success": True,
@@ -217,6 +216,62 @@ def signup(user: UserSignup):
 
     logger.info(f"[signup] New user created with ID: {user_id}")
     return {"success": True, "user_id": user_id}
+
+
+@app.get("/recent-recipes")
+def get_recent_recipes(
+    user_id: str = Query(..., description="Airtable record ID returned from /login")
+):
+    """
+    Fetch the last 5 recipes uploaded by this user.
+    """
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+
+    # 1) Grab the user record by its Airtable record ID
+    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}/{user_id}"
+    user_resp = requests.get(user_url, headers=headers)
+    if user_resp.status_code == 404:
+        raise HTTPException(404, detail="User not found")
+    if user_resp.status_code != 200:
+        raise HTTPException(500, detail="Error fetching user from Airtable")
+
+    user_fields = user_resp.json().get("fields", {})
+    # The linked-record field in your Users table that holds recipe-record IDs
+    recipe_ids: list[str] = user_fields.get("Recipes", [])
+    if not recipe_ids:
+        return []  # no uploads yet
+
+    # 2) Fetch those recipe records in one shot, sorted by creation time desc, limit 5
+    recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    # Build an OR(...) formula on RECORD_ID()
+    or_clauses = ",".join(f"RECORD_ID()='{rid}'" for rid in recipe_ids)
+    params = {
+        "filterByFormula": f"OR({or_clauses})",
+        "sort[0][field]": "Created Time",
+        "sort[0][direction]": "desc",
+        "pageSize": 5
+    }
+    rec_resp = requests.get(recipes_url, headers=headers, params=params)
+    if rec_resp.status_code != 200:
+        raise HTTPException(500, detail="Failed to fetch recipes")
+
+    output = []
+    for record in rec_resp.json().get("records", []):
+        fields = record.get("fields", {})
+        # assume you still store your full JSON under “Recipe JSON”
+        try:
+            parsed = json.loads(fields.get("Recipe JSON", "{}"))
+        except json.JSONDecodeError:
+            parsed = {}
+        output.append({
+            "id": record["id"],
+            "title": parsed.get("title", fields.get("Title", "")),
+            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "ingredients": parsed.get("ingredients")
+        })
+
+    logging.info(f"[recent-recipes] returning {len(output)} records for user {user_id}")
+    return output
 
 @app.post("/save-recipe")
 def save_recipe(payload: dict):
@@ -780,95 +835,6 @@ def resend_rappi_cart():
     return rappi_cart_search(**cached_last_payload)
 
 
-@app.get("/recent-recipes")
-def get_recent_recipes(user_id: str = Query(..., description="external UUID from /login")):
-    """
-    Return the 5 most-recent recipes uploaded by the logged-in user.
-    Expects `user_id` to be the external UUID issued at /login.
-    """
-    # 1️⃣ map external UUID → Airtable user record ID
-    airtable_user_id = next(
-        (aid for aid, ext in AUTH_UID_MAP.items() if ext == user_id),
-        None
-    )
-    if not airtable_user_id:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    # 2️⃣ fetch that user record from Airtable
-    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}/{airtable_user_id}"
-    headers  = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    resp     = requests.get(user_url, headers=headers)
-    if resp.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch user record")
-
-    user_fields = resp.json().get("fields", {})
-    recipe_ids  = user_fields.get("Recipes", [])
-    if not recipe_ids:
-        raise HTTPException(status_code=404, detail="No recent recipes")
-
-    # 3️⃣ pull the latest 5 (assuming they're in chronological order in that list)
-    recent_ids = recipe_ids[:5]
-
-    # 4️⃣ fetch each recipe and build response
-    out = []
-    for rid in recent_ids:
-        rec_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}/{rid}"
-        r = requests.get(rec_url, headers=headers)
-        if r.status_code != 200:
-            continue
-        fields = r.json().get("fields", {})
-        # parse your stored JSON blob if you want
-        parsed = {}
-        try:
-            parsed = json.loads(fields.get("Recipe JSON", "{}"))
-        except:
-            pass
-
-        out.append({
-            "id": rid,
-            "title": parsed.get("title") or fields.get("Title"),
-            "cook_time_minutes": parsed.get("cookTimeMinutes"),
-            "ingredients": parsed.get("ingredients")
-        })
-
-    return out
-
-
-    # === Option B: Read the “Recipes” link on the User record ===
-    # #1 fetch the single user record by Airtable record ID:
-    # user_record = requests.get(f"{users_url}/{airtable_user_id}", headers=headers).json()
-    # linked_ids = user_record["fields"].get("Recipes", [])
-    # if not linked_ids:
-    #     return []
-    #
-    # #2 batch‐fetch those recipes with a RECORD_ID() formula:
-    # formula = "OR(" + ",".join(f"RECORD_ID()='{rid}'" for rid in linked_ids) + ")"
-    # rec_resp = requests.get(
-    #     recipes_url,
-    #     headers=headers,
-    #     params={
-    #         "filterByFormula": formula,
-    #         "sort[0][field]": "Created Time",
-    #         "sort[0][direction]": "desc",
-    #         "pageSize": 5
-    #     }
-    # )
-    # ...same parsing after this
-    # records = rec_resp.json().get("records", [])
-
-    # # parse and return…
-    # output = []
-    # for r in records:
-    #     fields = r.get("fields", {})
-    #     parsed = json.loads(fields.get("Recipe JSON", "{}"))
-    #     output.append({
-    #         "id": r["id"],
-    #         "title": parsed.get("title", fields.get("Title")),
-    #         "cook_time_minutes": parsed.get("cookTimeMinutes"),
-    #         "ingredients": parsed.get("ingredients")
-    #     })
-    # logger.info(f"[recent-recipes] Parsed output: {json.dumps(output, indent=2)}")
-    # return output
 
 @app.get("/saved-recipes/{user_id}")
 def get_saved_recipes(user_id: str):
