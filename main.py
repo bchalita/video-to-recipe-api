@@ -14,6 +14,8 @@ import yt_dlp
 from bs4 import BeautifulSoup
 from unidecode import unidecode
 from rapidfuzz import fuzz
+from typing import Dict
+
 
 
 
@@ -41,6 +43,8 @@ logging.basicConfig(level=logging.INFO)
 
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./recipes.db")
+
+AUTH_UID_MAP: Dict[str, str] = {}
 
 
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {})
