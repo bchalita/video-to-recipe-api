@@ -125,39 +125,43 @@ class UserLogin(BaseModel):
 
 @app.post("/login")
 def login(user: UserLogin = Body(...)):
+    """
+    Authenticate a user against Airtable and return the record ID plus the real
+    external UUID stored in the 'User ID' column.
+    """
+    # 1. Fetch user record by email
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
     params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
     resp = requests.get(url, headers=headers, params=params)
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
-
     records = resp.json().get("records", [])
     if not records:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # 2. Grab fields and debug-print exactly what Airtable sent
     airtable_record = records[0]
     fields = airtable_record["fields"]
-
-    # 🔍 Debug
     logger.info(f"[login] Airtable user fields: {fields}")
 
-    # Verify password
+    # 3. Verify password
     hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
     if fields.get("Password") != hashed_input:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # ← Use the actual column name here:
-    real_uuid = fields.get("User uuid")  # e.g. "User uuid" or "User ID"
+    # 4. Pull the real UUID out of the **User ID** column
+    real_uuid = fields.get("User ID")
     if not real_uuid:
         raise HTTPException(status_code=500, detail="No external UID on user record")
 
-    # Map Airtable record ID → real UUID
+    # 5. (Optional) Map your internal record ID → external UUID
     AUTH_UID_MAP[airtable_record["id"]] = real_uuid
 
+    # 6. Return Airtable record ID (front-end’s user_id) and name
     return {
         "success": True,
-        "user_id": airtable_record["id"],  # what your frontend will carry
+        "user_id": airtable_record["id"],
         "name": fields.get("Name")
     }
 
