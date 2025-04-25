@@ -126,69 +126,44 @@ class UserLogin(BaseModel):
 @app.post("/login")
 def login(user: UserLogin = Body(...)):
     """
-    1) Verify email/password against your Airtable Users table.
-    2) Upsert the external UID into the same row (or create a new one).
-    3) Return the Airtable record ID as `user_id`.
+    Authenticate a user against Airtable.
     """
+    # 1. Fetch user record by email
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    base_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    resp = requests.get(url, headers=headers, params=params)
 
-    # 1. Fetch by email
-    resp = requests.get(base_url, headers=headers, params={"filterByFormula": f"{{Email}}='{user.email}'"})
-    resp.raise_for_status()
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch user")
+
     records = resp.json().get("records", [])
     if not records:
-        raise HTTPException(404, "User not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     # 2. Verify password
-    rec = records[0]
-    fields = rec["fields"]
-    hashed = hashlib.sha256(user.password.encode()).hexdigest()
-    if fields.get("Password") != hashed:
-        raise HTTPException(401, "Invalid credentials")
+    airtable_record = records[0]
+    fields = airtable_record["fields"]
+    hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
+    if fields.get("Password") != hashed_input:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    airtable_id = rec["id"]
+    # 3. Pull the “real” UUID from the Airtable user record
+    #    (whatever column you named in Airtable, e.g. "Auth UID" or "User uuid")
+    real_uuid = fields.get("Auth UID")  # ← change this to your exact field name
+    if not real_uuid:
+        raise HTTPException(status_code=500, detail="No external UID on user record")
 
-    # 3. Upsert external UID if provided
-    if user.external_uid:
-        # 3a) Look for any existing row already tied to this external UID
-        lookup = requests.get(
-            base_url,
-            headers=headers,
-            params={"filterByFormula": f"{{Auth UID}}='{user.external_uid}'"}
-        )
-        lookup.raise_for_status()
-        existing = lookup.json().get("records", [])
+    # 4. Map the Airtable record ID → real UUID for later lookups in /recent-recipes
+    AUTH_UID_MAP[airtable_record["id"]] = real_uuid
 
-        if existing:
-            # Already linked: update last login timestamp
-            existing_id = existing[0]["id"]
-            requests.patch(
-                f"{base_url}/{existing_id}",
-                headers=headers,
-                json={"fields": {
-                    "Last Login": datetime.utcnow().isoformat()
-                }}
-            )
-            # If the email-lookup row and the external-UID row differ, you might want
-            # to merge data or clean up—but that’s up to your policy.
-        else:
-            # 3b) Write the external UID into *this* Airtable row
-            requests.patch(
-                f"{base_url}/{airtable_id}",
-                headers=headers,
-                json={"fields": {
-                    "Auth UID": user.external_uid,
-                    "Last Login": datetime.utcnow().isoformat()
-                }}
-            )
-
-    # 4. Return the Airtable record ID (this is what your client will pass to /recent-recipes)
+    # 5. Return to frontend **only** the Airtable record ID (not the real UUID)
     return {
         "success": True,
-        "user_id": airtable_id,
+        "user_id": airtable_record["id"],
         "name": fields.get("Name")
     }
+
 
 class UserSignup(BaseModel):
     name: str
