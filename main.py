@@ -15,6 +15,8 @@ from bs4 import BeautifulSoup
 from unidecode import unidecode
 from rapidfuzz import fuzz
 from typing import Dict
+from fastapi import Query
+
 
 
 
