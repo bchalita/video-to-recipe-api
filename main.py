@@ -125,15 +125,10 @@ class UserLogin(BaseModel):
 
 @app.post("/login")
 def login(user: UserLogin = Body(...)):
-    """
-    Authenticate a user against Airtable.
-    """
-    # 1. Fetch user record by email
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
     params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
     resp = requests.get(url, headers=headers, params=params)
-
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
 
@@ -141,26 +136,28 @@ def login(user: UserLogin = Body(...)):
     if not records:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # 2. Verify password
     airtable_record = records[0]
     fields = airtable_record["fields"]
+
+    # 🔍 Debug
+    logger.info(f"[login] Airtable user fields: {fields}")
+
+    # Verify password
     hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
     if fields.get("Password") != hashed_input:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    # 3. Pull the “real” UUID from the Airtable user record
-    #    (whatever column you named in Airtable, e.g. "Auth UID" or "User uuid")
-    real_uuid = fields.get("Auth UID")  # ← change this to your exact field name
+    # ← Use the actual column name here:
+    real_uuid = fields.get("User uuid")  # e.g. "User uuid" or "User ID"
     if not real_uuid:
         raise HTTPException(status_code=500, detail="No external UID on user record")
 
-    # 4. Map the Airtable record ID → real UUID for later lookups in /recent-recipes
+    # Map Airtable record ID → real UUID
     AUTH_UID_MAP[airtable_record["id"]] = real_uuid
 
-    # 5. Return to frontend **only** the Airtable record ID (not the real UUID)
     return {
         "success": True,
-        "user_id": airtable_record["id"],
+        "user_id": airtable_record["id"],  # what your frontend will carry
         "name": fields.get("Name")
     }
 
