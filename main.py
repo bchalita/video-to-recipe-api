@@ -766,41 +766,39 @@ def resend_rappi_cart():
 def get_recent_recipes(user_id: str):
     logger.info(f"[recent-recipes] start for user_id={user_id}")
 
-    # 1) look up the Airtable record ID for this Auth0 user
-    resp_user = requests.get(
-        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}",
-        headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}"},
-        params={"filterByFormula": f"{{User ID}} = '{user_id}'"}
-    )
-    if resp_user.status_code != 200:
-        logger.error(f"[recent-recipes] user lookup failed: {resp_user.text}")
-        raise HTTPException(500, "User lookup error")
+    # 1. Look up the Airtable record ID for this external user_id
+    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    user_params = {
+        "filterByFormula": f"{{User UUID}} = '{user_id}'"  # <-- your column that stores the external UUID
+    }
+    user_resp = requests.get(user_url, headers=headers, params=user_params)
+    if user_resp.status_code != 200:
+        logger.error(f"[recent-recipes] Users lookup failed: {user_resp.text}")
+        raise HTTPException(500, "Failed to look up user")
 
-    users_data = resp_user.json().get("records", [])
-    if not users_data:
+    users = user_resp.json().get("records", [])
+    if not users:
         logger.warning(f"[recent-recipes] no Airtable user found for {user_id}")
-        return []
+        return []  # or HTTPException(404) if you prefer
 
-    airtable_user_record_id = users_data[0]["id"]
-    logger.debug(f"[recent-recipes] Airtable user record ID = {airtable_user_record_id}")
+    airtable_user_rec_id = users[0]["id"]
+    logger.info(f"[recent-recipes] matched Airtable user record: {airtable_user_rec_id}")
 
-    # 2) fetch the last 5 recipes linked to that record
-    resp_recipes = requests.get(
-        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
-        headers={"Authorization": f"Bearer {AIRTABLE_API_KEY}"},
-        params={
-            "filterByFormula": f"FIND('{airtable_user_record_id}', ARRAYJOIN({{User ID}}))",
-            "sort[0][field]": "Created Time",
-            "sort[0][direction]": "desc",
-            "pageSize": 5
-        }
-    )
+    # 2. Fetch the most recent 5 recipes linked to that record ID
+    recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    recipes_params = {
+        "filterByFormula": f"{{User ID}} = '{airtable_user_rec_id}'",
+        "sort[0][field]": "Created Time",
+        "sort[0][direction]": "desc",
+        "pageSize": 5
+    }
+    recipes_resp = requests.get(recipes_url, headers=headers, params=recipes_params)
+    if recipes_resp.status_code != 200:
+        logger.error(f"[recent-recipes] Recipes lookup failed: {recipes_resp.text}")
+        raise HTTPException(500, "Failed to fetch recent recipes")
 
-    if resp_recipes.status_code != 200:
-        logger.error(f"[recent-recipes] recipes fetch failed: {resp_recipes.text}")
-        raise HTTPException(500, "Recipes fetch error")
-
-    records = resp_recipes.json().get("records", [])
+    records = recipes_resp.json().get("records", [])
     output = []
     for r in records:
         fields = r.get("fields", {})
@@ -813,7 +811,8 @@ def get_recent_recipes(user_id: str):
                 "ingredients": parsed.get("ingredients")
             })
         except Exception as e:
-            logger.warning(f"[recent-recipes] parse error on record {r['id']}: {e}")
+            logger.warning(f"[recent-recipes] parse error for record {r['id']}: {e}")
+            continue
 
     logger.info(f"[recent-recipes] returning {len(output)} recipes")
     return output
