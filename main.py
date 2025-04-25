@@ -35,6 +35,7 @@ from email.mime.text import MIMEText
 import requests
 from openai import OpenAI
 import uuid
+from uuid import uuid4
 from schemas import UserLogin  # make sure you have UserLogin in schemas.py
 import logging
 
@@ -155,20 +156,21 @@ def login(user: UserLogin = Body(...)):
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
     # 4. Pull the real UUID out of the **User ID** column
-    real_uuid = fields.get("User ID")
-    if not real_uuid:
-        raise HTTPException(status_code=500, detail="No external UID on user record")
 
     # 5. (Optional) Map your internal record ID → external UUID
-    AUTH_UID_MAP[airtable_record["id"]] = real_uuid
+    airtable_id = records[0]["id"]
+    # if we’ve already issued an external UUID for this user, re-use it;
+    # otherwise create a new one and store it
+    real_uuid = AUTH_UID_MAP.get(airtable_id) or str(uuid4())
+    AUTH_UID_MAP[airtable_id] = real_uuid
 
-    # 6. Return Airtable record ID (front-end’s user_id) and name
     return {
         "success": True,
-        "user_id": airtable_record["id"],
-        "name": fields.get("Name")
+        "user_id": real_uuid,         # ← client will see THIS
+        "name": record.get("Name")
     }
 
+    # 6. Return Airtable record ID (front-end’s user_id) and name
 
 class UserSignup(BaseModel):
     name: str
@@ -778,41 +780,57 @@ def resend_rappi_cart():
 
 
 @app.get("/recent-recipes")
-def get_recent_recipes(airtable_user_id: str):
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    users_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}/{airtable_user_id}"
-
-    # Fetch the linked Recipes array
-    user_rec = requests.get(users_url, headers=headers)
-    user_rec.raise_for_status()
-    linked = user_rec.json()["fields"].get("Recipes", [])
-    if not linked:
-        return []
-
-    # Pull the latest 5 recipe records by record ID
-    formula = "OR(" + ",".join(f"RECORD_ID()='{rid}'" for rid in linked[:5]) + ")"
-    recs = requests.get(
-        f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}",
-        headers=headers,
-        params={
-            "filterByFormula": formula,
-            "sort[0][field]": "Created Time",
-            "sort[0][direction]": "desc"
-        }
+def get_recent_recipes(user_id: str = Query(..., description="external UUID from /login")):
+    """
+    Return the 5 most-recent recipes uploaded by the logged-in user.
+    Expects `user_id` to be the external UUID issued at /login.
+    """
+    # 1️⃣ map external UUID → Airtable user record ID
+    airtable_user_id = next(
+        (aid for aid, ext in AUTH_UID_MAP.items() if ext == user_id),
+        None
     )
-    recs.raise_for_status()
+    if not airtable_user_id:
+        raise HTTPException(status_code=404, detail="User not found")
 
-    output = []
-    for r in recs.json().get("records", []):
-        f = r["fields"]
-        parsed = json.loads(f.get("Recipe JSON", "{}"))
-        output.append({
-            "id": r["id"],
-            "title": parsed.get("title", f.get("Title")),
+    # 2️⃣ fetch that user record from Airtable
+    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}/{airtable_user_id}"
+    headers  = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    resp     = requests.get(user_url, headers=headers)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch user record")
+
+    user_fields = resp.json().get("fields", {})
+    recipe_ids  = user_fields.get("Recipes", [])
+    if not recipe_ids:
+        raise HTTPException(status_code=404, detail="No recent recipes")
+
+    # 3️⃣ pull the latest 5 (assuming they're in chronological order in that list)
+    recent_ids = recipe_ids[:5]
+
+    # 4️⃣ fetch each recipe and build response
+    out = []
+    for rid in recent_ids:
+        rec_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}/{rid}"
+        r = requests.get(rec_url, headers=headers)
+        if r.status_code != 200:
+            continue
+        fields = r.json().get("fields", {})
+        # parse your stored JSON blob if you want
+        parsed = {}
+        try:
+            parsed = json.loads(fields.get("Recipe JSON", "{}"))
+        except:
+            pass
+
+        out.append({
+            "id": rid,
+            "title": parsed.get("title") or fields.get("Title"),
             "cook_time_minutes": parsed.get("cookTimeMinutes"),
             "ingredients": parsed.get("ingredients")
         })
-    return output
+
+    return out
 
 
     # === Option B: Read the “Recipes” link on the User record ===
