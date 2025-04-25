@@ -379,21 +379,14 @@ def rappi_cart_search(
             ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
 
         prompt = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a Brazilian grocery translator.  Your job is to turn each English ingredient into "
-                    "the single most common Portuguese supermarket term, respecting how people shop.  If an ingredient "
-                    "has multiple supermarket variants (e.g. “lime” → Tahiti, Siciliano, Galego), pick the broadest generic "
-                    "form (e.g. “limão”) and note in parentheses its top regional variant: e.g. “limão (Tahiti)”.  Always "
-                    "return a flat JSON array of strings and nothing else."
-                )
-            },
-            {
-                "role": "user",
-                "content": f"Translate to Portuguese, in JSON array form: {json.dumps(ingredients)}"
-            }
+            {"role": "system", "content": (
+                "You are a food translation expert. Translate each ingredient into the common name as used in Brazilian supermarkets. "
+                "Use product terminology that aligns with shopping categories (e.g., 'pasta' should become 'macarrão', not 'massa'). "
+                "Return only a JSON array."
+            )},
+            {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
         ]
+
         translation_response = client.chat.completions.create(
             model="gpt-4o",
             messages=prompt,
@@ -474,42 +467,23 @@ def rappi_cart_search(
                 {
                     "role": "system",
                     "content": (
-                        "You are a Brazilian supermarket search specialist.  For each generic translated term, output up to 5 "
-                        "precise search keywords that a shopper would type to find that ingredient in the correct department.  "
-                        "For produce, list the most common regional variants; for packaged items, include size or packaging (e.g. "
-                        "“fermento nutricional sachê 100g”).  Do NOT suggest non-food or combo products.  Output only a JSON list "
-                        "of 1–5 strings."
-                    )
+                                "You are a grocery search expert fluent in Brazilian Portuguese. "
+                                "Your task is to translate each English ingredient into up to 5 highly relevant Brazilian Portuguese product search terms. "
+                                "Think like a picky customer typing into the search bar — you want the most accurate, buyable item on the first try. "
+                                "- **First term must be the singular root** of the ingredient (e.g. 'alho' for 'garlic').  \n"
+                                "- Then more specific forms ('alho fresco', 'alho descascado') if needed.  \n"
+                                "- **Do not** include words that clash with non-food categories (e.g. 'dentes').  \n"
+                                "Use context from the recipe to avoid irrelevant or generic items. " 
+                                "For example, you know from a steak frittes recipe that you are looking for a good cut of meat "
+                                "For example you know that a Tuna tartar will use the fresh tuna fish and not 'atum em lata'"
+                                "For example, always prioritize the item on its own, avoiding 'mixturas' or item combinations unless explicitily prompted to"
+                                "For example: do not return 'molho de tomate' for 'tomato', or 'alho poró' for 'garlic'. "
+                                "Stick to fresh, common supermarket terms unless otherwise clear from context. "
+                                "Given the 5 selections, be wise on which are the most relevant. "
+                                "Output only a valid JSON list of 5 or fewer strings. No explanation, no formatting, no commentary."
+                            )
                 },
-                {
-                    "role": "user",
-                    "content": f"Given the ingredient term: \"{translated}\", suggest up to 5 search queries."
-                }
             ]
-            
-            
-            
-            # [
-            #     {
-            #         "role": "system",
-            #         "content": (
-            #                     "You are a grocery search expert fluent in Brazilian Portuguese. "
-            #                     "Your task is to translate each English ingredient into up to 5 highly relevant Brazilian Portuguese product search terms. "
-            #                     "Think like a picky customer typing into the search bar — you want the most accurate, buyable item on the first try. "
-            #                     "- **First term must be the singular root** of the ingredient (e.g. 'alho' for 'garlic').  \n"
-            #                     "- Then more specific forms ('alho fresco', 'alho descascado') if needed.  \n"
-            #                     "- **Do not** include words that clash with non-food categories (e.g. 'dentes').  \n"
-            #                     "Use context from the recipe to avoid irrelevant or generic items. " 
-            #                     "For example, you know from a steak frittes recipe that you are looking for a good cut of meat "
-            #                     "For example you know that a Tuna tartar will use the fresh tuna fish and not 'atum em lata'"
-            #                     "For example, always prioritize the item on its own, avoiding 'mixturas' or item combinations unless explicitily prompted to"
-            #                     "For example: do not return 'molho de tomate' for 'tomato', or 'alho poró' for 'garlic'. "
-            #                     "Stick to fresh, common supermarket terms unless otherwise clear from context. "
-            #                     "Given the 5 selections, be wise on which are the most relevant. "
-            #                     "Output only a valid JSON list of 5 or fewer strings. No explanation, no formatting, no commentary."
-            #                 )
-            #     },
-            # ]
 
             fallback_prompt.append({"role": "user", "content": f"Term: '{translated}'"})
 
@@ -624,45 +598,21 @@ def rappi_cart_search(
         
                     # 2️⃣ Ask GPT to pick exactly one of them:
                     gpt_prompt = [
-                        {
-                            "role": "system",
-                            "content": (
-                                "You are an online grocery selector for Zona Sul.  From a numbered list of real product cards, choose the "
-                                "single best match for the ingredient.  Criteria, in order: 1) correct department (produce vs. pantry), "
-                                "2) closest packaging size to needed quantity, 3) known supermarket brands, 4) lower unit price.  If a card "
-                                "is out-of-category or none meet criteria, reply exactly \"REJECT\".  Return only the product name."
+                        {"role": "system", "content": (
+                            "You're helping someone shop online for groceries in Brazil. "
+                            "From the list of available products, select the **single** best match "
+                            "for the ingredient mentioned. Reply only with the product name. "
+                            "If none are acceptable, return 'REJECT'."
+                        )},
+                        {"role": "user", "content": (
+                            f"Ingredient: {original}\n\n"
+                            "Available products:\n" +
+                            "\n".join(
+                                f"{i+1}. {c['name']} — {c['price']} — {c['description']}"
+                                for i, c in enumerate(product_candidates)
                             )
-                        },
-                        {
-                            "role": "user",
-                            "content": (
-                                f"Ingredient: {original}\n"
-                                f"Quantity needed: {quantity_needed}\n\n"
-                                "Available products:\n" +
-                                "\n".join(
-                                    f"{i+1}. {c['name']} — {c['price']} — {c['description']}"
-                                    for i, c in enumerate(product_candidates)
-                                )
-                            )
-                        }
+                        )}
                     ]
-                    
-                    # [
-                    #     {"role": "system", "content": (
-                    #         "You're helping someone shop online for groceries in Brazil. "
-                    #         "From the list of available products, select the **single** best match "
-                    #         "for the ingredient mentioned. Reply only with the product name. "
-                    #         "If none are acceptable, return 'REJECT'."
-                    #     )},
-                    #     {"role": "user", "content": (
-                    #         f"Ingredient: {original}\n\n"
-                    #         "Available products:\n" +
-                    #         "\n".join(
-                    #             f"{i+1}. {c['name']} — {c['price']} — {c['description']}"
-                    #             for i, c in enumerate(product_candidates)
-                    #         )
-                    #     )}
-                    # ]
                     response = client.chat.completions.create(
                         model="gpt-4o",
                         messages=gpt_prompt,
