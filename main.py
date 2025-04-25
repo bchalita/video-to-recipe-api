@@ -133,44 +133,43 @@ class UserLogin(BaseModel):
 @app.post("/login")
 def login(user: UserLogin = Body(...)):
     """
-    Authenticate a user against Airtable and return the record ID plus the real
-    external UUID stored in the 'User ID' column.
+    Authenticate a user against Airtable.
     """
-    # 1. Fetch user record by email
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{Email}} = '{user.email}'"}
+    headers = {
+        "Authorization": f"Bearer {AIRTABLE_API_KEY}"
+    }
+    params = {
+        "filterByFormula": f"{{Email}} = '{user.email}'"
+    }
     url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
     resp = requests.get(url, headers=headers, params=params)
     if resp.status_code != 200:
         raise HTTPException(status_code=500, detail="Failed to fetch user")
+    
     records = resp.json().get("records", [])
     if not records:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    record = records[0]["fields"]  # <- YOU NEED THIS LINE
+    airtable_record = records[0]   # also keeping the full record for ID mapping
 
-    # 2. Grab fields and debug-print exactly what Airtable sent
-    airtable_record = records[0]
-    fields = airtable_record["fields"]
-    logger.info(f"[login] Airtable user fields: {fields}")
-
-    # 3. Verify password
     hashed_input = hashlib.sha256(user.password.encode()).hexdigest()
-    if fields.get("Password") != hashed_input:
+    if record.get("Password") != hashed_input:
         raise HTTPException(status_code=401, detail="Invalid credentials")
-
-    # 4. Pull the real UUID out of the **User ID** column
-
-    # 5. (Optional) Map your internal record ID → external UUID
-    airtable_id = records[0]["id"]
-    # if we’ve already issued an external UUID for this user, re-use it;
-    # otherwise create a new one and store it
-    real_uuid = AUTH_UID_MAP.get(airtable_id) or str(uuid4())
-    AUTH_UID_MAP[airtable_id] = real_uuid
+    
+    # Mapping user IDs
+    real_uuid = record.get("User ID")
+    if not real_uuid:
+        raise HTTPException(status_code=500, detail="No external UID on user record")
+    
+    AUTH_UID_MAP[airtable_record["id"]] = real_uuid
 
     return {
         "success": True,
-        "user_id": real_uuid,         # ← client will see THIS
+        "user_id": airtable_record["id"],
         "name": record.get("Name")
     }
+
 
     # 6. Return Airtable record ID (front-end’s user_id) and name
 
