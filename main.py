@@ -762,60 +762,91 @@ def resend_rappi_cart():
     # Re-run with last payload
     return rappi_cart_search(**cached_last_payload)
 
+from fastapi import HTTPException
+import requests, json, logging
+
+logger = logging.getLogger("main")
+
 @app.get("/recent-recipes")
 def get_recent_recipes(user_id: str):
     logger.info(f"[recent-recipes] start for user_id={user_id}")
-
-    # 1. Look up the Airtable record ID for this external user_id
-    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
     headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    user_params = {
-        "filterByFormula": f"{{User UUID}} = '{user_id}'"  # <-- your column that stores the external UUID
-    }
-    user_resp = requests.get(user_url, headers=headers, params=user_params)
-    if user_resp.status_code != 200:
-        logger.error(f"[recent-recipes] Users lookup failed: {user_resp.text}")
-        raise HTTPException(500, "Failed to look up user")
 
-    users = user_resp.json().get("records", [])
-    if not users:
-        logger.warning(f"[recent-recipes] no Airtable user found for {user_id}")
-        return []  # or HTTPException(404) if you prefer
+    # === Option A: Two-step filter on the Recipes table ===
+    # 1) turn your external UUID into the Airtable Users-record ID
+    users_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
+    # make sure this matches exactly the field name in your Users table!
+    params = {"filterByFormula": f"{{user id}} = '{user_id}'"}
+    user_resp = requests.get(users_url, headers=headers, params=params)
+    if user_resp.status_code != 200 or not user_resp.json().get("records"):
+        logger.warning(f"[recent-recipes] Users lookup failed: {user_resp.json()}")
+        raise HTTPException(status_code=404, detail="User not found")
 
-    airtable_user_rec_id = users[0]["id"]
-    logger.info(f"[recent-recipes] matched Airtable user record: {airtable_user_rec_id}")
+    airtable_user_id = user_resp.json()["records"][0]["id"]
 
-    # 2. Fetch the most recent 5 recipes linked to that record ID
+    # 2) filter the Recipes table by that linked-record field
     recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-    recipes_params = {
-        "filterByFormula": f"{{User ID}} = '{airtable_user_rec_id}'",
+    params = {
+        "filterByFormula": f"{{User ID}} = '{airtable_user_id}'",
         "sort[0][field]": "Created Time",
         "sort[0][direction]": "desc",
         "pageSize": 5
     }
-    recipes_resp = requests.get(recipes_url, headers=headers, params=recipes_params)
-    if recipes_resp.status_code != 200:
-        logger.error(f"[recent-recipes] Recipes lookup failed: {recipes_resp.text}")
-        raise HTTPException(500, "Failed to fetch recent recipes")
+    rec_resp = requests.get(recipes_url, headers=headers, params=params)
+    if rec_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch recipes")
 
-    records = recipes_resp.json().get("records", [])
+    records = rec_resp.json().get("records", [])
+
+    # parse and return…
     output = []
     for r in records:
         fields = r.get("fields", {})
-        try:
-            parsed = json.loads(fields.get("Recipe JSON", "{}"))
-            output.append({
-                "id": r["id"],
-                "title": parsed.get("title", fields.get("Title")),
-                "cook_time_minutes": parsed.get("cookTimeMinutes"),
-                "ingredients": parsed.get("ingredients")
-            })
-        except Exception as e:
-            logger.warning(f"[recent-recipes] parse error for record {r['id']}: {e}")
-            continue
-
-    logger.info(f"[recent-recipes] returning {len(output)} recipes")
+        parsed = json.loads(fields.get("Recipe JSON", "{}"))
+        output.append({
+            "id": r["id"],
+            "title": parsed.get("title", fields.get("Title")),
+            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "ingredients": parsed.get("ingredients")
+        })
+    logger.info(f"[recent-recipes] Parsed output: {json.dumps(output, indent=2)}")
     return output
+
+    # === Option B: Read the “Recipes” link on the User record ===
+    # #1 fetch the single user record by Airtable record ID:
+    # user_record = requests.get(f"{users_url}/{airtable_user_id}", headers=headers).json()
+    # linked_ids = user_record["fields"].get("Recipes", [])
+    # if not linked_ids:
+    #     return []
+    #
+    # #2 batch‐fetch those recipes with a RECORD_ID() formula:
+    # formula = "OR(" + ",".join(f"RECORD_ID()='{rid}'" for rid in linked_ids) + ")"
+    # rec_resp = requests.get(
+    #     recipes_url,
+    #     headers=headers,
+    #     params={
+    #         "filterByFormula": formula,
+    #         "sort[0][field]": "Created Time",
+    #         "sort[0][direction]": "desc",
+    #         "pageSize": 5
+    #     }
+    # )
+    # ...same parsing after this
+    # records = rec_resp.json().get("records", [])
+
+    # # parse and return…
+    # output = []
+    # for r in records:
+    #     fields = r.get("fields", {})
+    #     parsed = json.loads(fields.get("Recipe JSON", "{}"))
+    #     output.append({
+    #         "id": r["id"],
+    #         "title": parsed.get("title", fields.get("Title")),
+    #         "cook_time_minutes": parsed.get("cookTimeMinutes"),
+    #         "ingredients": parsed.get("ingredients")
+    #     })
+    # logger.info(f"[recent-recipes] Parsed output: {json.dumps(output, indent=2)}")
+    # return output
 
 @app.get("/saved-recipes/{user_id}")
 def get_saved_recipes(user_id: str):
