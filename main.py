@@ -762,10 +762,6 @@ def resend_rappi_cart():
     # Re-run with last payload
     return rappi_cart_search(**cached_last_payload)
 
-from fastapi import HTTPException
-import requests, json, logging
-
-logger = logging.getLogger("main")
 
 @app.get("/recent-recipes")
 def get_recent_recipes(user_id: str):
