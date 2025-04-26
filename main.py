@@ -266,9 +266,9 @@ def get_recent_recipes(
         output.append({
             "id": record["id"],
             "title": parsed.get("title", fields.get("Title", "")),
-            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "cook_time_minutes": parsed.get("cook_time_minutes"),
             "ingredients": parsed.get("ingredients"),
-            "instructions": parsed.get("steps")
+            "steps": parsed.get("steps")
             
         })
 
@@ -309,7 +309,7 @@ def save_recipe(payload: dict):
             "User ID": [airtable_user_id],
             "Recipe JSON": json.dumps(recipe),
             "Title": recipe.get("title"),
-            "Cook Time (Minutes)": recipe.get("cookTimeMinutes"),
+            "Cook Time (Minutes)": recipe.get("cook_time_minutes"),
             "Ingredients": "\n".join([
                 f"{i['quantity']} {i['name']}" for i in recipe.get("ingredients", [])
             ]),
@@ -369,9 +369,9 @@ def get_saved_recipes(user_id: str):
         output.append({
             "id": rec["id"],
             "title": parsed.get("title", f.get("Title")),
-            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "cook_time_minutes": parsed.get("cook_time_minutes"),
             "ingredients": parsed.get("ingredients"),
-            "instructions": parsed.get("steps")
+            "steps": parsed.get("steps")
         })
     return output
 
