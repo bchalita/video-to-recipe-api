@@ -1080,51 +1080,71 @@ def rappi_cart_search(
                 product_candidates = []
         
                 if "zonasul.com.br" in url:
-                    # — Zona Sul scraping logic stays exactly as you have it —
-                    search_url = f"https://www.zonasul.com.br/{term.replace(' ','%20')}?_q={term.replace(' ','%20')}&map=ft"
+                    # 1️⃣ Build & log the search URL
+                    search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+                    logger.info(f"[rappi-cart][{orig} @ {store}] ➤ Full URL: {search_url}")
+                
                     r = requests.get(search_url, headers=headers, timeout=10)
                     soup = BeautifulSoup(r.text, "html.parser")
-                    
-                    # grab the VTEX product-summary cards
+                
+                    # 2️⃣ Grab the VTEX cards
                     cards = soup.select("article.vtex-product-summary-2-x-element")
-                    for card in cards[:5]:
-                        # name (brandName first, fallback into the <h2> wrapper)
+                    logger.info(f"[rappi-cart][{orig} @ {store}] 🧱 Found {len(cards)} product cards")
+                
+                    if not cards:
+                        logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ No cards at all – page may be JS-rendered")
+                        # let fallback or next term handle it
+                    for idx, card in enumerate(cards[:5]):
+                        # 3️⃣ Extract name
                         name_el = (
-                            card.select_one("span.vtex-product-summary-2-x-brandName")
+                            card.select_one("span.vtex-product-summary-2-x-brandName") 
                             or card.select_one("h2.vtex-product-summary-2-x-productNameContainer span")
                         )
                         if not name_el:
+                            logger.debug(f"[{orig} @ {store}] card #{idx} → no name element, skipping")
                             continue
                         name = name_el.get_text(strip=True)
-                    
-                        # price integer + fraction (Zona Sul fixed-price first, then VTEX generic)
+                        logger.debug(f"[{orig} @ {store}] card #{idx} → name: {name!r}")
+                
+                        # 4️⃣ Extract price parts (Zona Sul custom first, then VTEX fallback)
                         int_el = (
-                            card.select_one("span.zonasul-fixed-price-0-x-currencyInteger")
+                            card.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
                             or card.select_one("span.vtex-product-summary-2-x-currencyInteger")
                         )
                         frac_el = (
-                            card.select_one("span.zonasul-fixed-price-0-x-currencyFraction")
+                            card.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
                             or card.select_one("span.vtex-product-summary-2-x-currencyFraction")
                         )
                         if not int_el:
-                            # no integer part → skip this card
+                            logger.warning(f"[{orig} @ {store}] card #{idx} → missing integer price part, skipping")
                             continue
-                        price = float(
-                            f"{int_el.text.strip()}.{(frac_el.text.strip() if frac_el else '00')}"
-                        )
-                    
-                        # image & description
+                        int_txt = int_el.get_text(strip=True)
+                        frac_txt = frac_el.get_text(strip=True) if frac_el else "00"
+                        try:
+                            price = float(f"{int_txt}.{frac_txt}")
+                        except Exception as e:
+                            logger.error(f"[{orig} @ {store}] card #{idx} → bad price parse '{int_txt}.{frac_txt}': {e}")
+                            continue
+                        logger.debug(f"[{orig} @ {store}] card #{idx} → price: R$ {price:.2f}")
+                
+                        # 5️⃣ Extract image
                         img_el = card.select_one("img.vtex-product-summary-2-x-imageNormal")
                         img = img_el["src"] if (img_el and img_el.has_attr("src")) else None
-                        description = name.lower()
-                    
+                
+                        # 6️⃣ Add to candidates
                         product_candidates.append({
                             "name": name,
                             "price": f"R$ {price:.2f}",
-                            "description": description,
+                            "description": name.lower(),
                             "image_url": img,
                             "raw": card
                         })
+                        logger.info(f"[{orig} @ {store}] candidate #{idx}: {name} — R$ {price:.2f}")
+                
+                    if not product_candidates:
+                        logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ no candidates after scraping")
+                        continue
+
 
         
                 else:
