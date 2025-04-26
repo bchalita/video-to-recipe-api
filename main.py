@@ -1080,23 +1080,40 @@ def rappi_cart_search(
         
                 if "zonasul.com.br" in url:
                     # — Zona Sul scraping logic stays exactly as you have it —
-                    search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
-                    resp = requests.get(search_url, headers=headers, timeout=10)
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    for block in soup.select("article.vtex-product-summary-2-x-element")[:5]:
-                        name_elem = block.select_one("span.vtex-product-summary-2-x-productBrand")
-                        price_int = block.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
-                        price_frac = block.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
-                        if not name_elem or not price_int:
-                            continue
-                        full_name = name_elem.get_text(strip=True)
-                        price = float(f"{price_int.text.strip()}.{(price_frac.text.strip() if price_frac else '00')}")
+                    search_url = f"https://www.zonasul.com.br/{term.replace(' ','%20')}?_q={term.replace(' ','%20')}&map=ft"
+                    r = requests.get(search_url, headers=headers, timeout=10)
+                    soup = BeautifulSoup(r.text, "html.parser")
+                    
+                    # grab the VTEX product-summary cards
+                    cards = soup.select("article.vtex-product-summary-2-x-element")
+                    for card in cards[:5]:
+                        # name
+                        name_el = card.select_one("span.vtex-product-summary-2-x-brandName")
+                        if not name_el:
+                            # fallback in case class changed
+                            name_el = card.select_one("h2.vtex-product-summary-2-x-productNameContainer span")
+                        name = name_el.get_text(strip=True)
+                    
+                        # price integer + fraction
+                        int_el = card.select_one("span.zonasul-fixed-price-0-x-currencyInteger")
+                        frac_el = card.select_one("span.zonasul-fixed-price-0-x-currencyFraction")
+                        if not int_el:
+                            # VTEX generic selectors
+                            int_el = card.select_one("span.vtex-product-summary-2-x-currencyInteger")
+                            frac_el = card.select_one("span.vtex-product-summary-2-x-currencyFraction")
+                        price = float(f"{int_el.text.strip()}.{(frac_el.text if frac_el else '00').strip()}")
+                    
+                        img = card.select_one("img.vtex-product-summary-2-x-imageNormal")["src"]
+                        description = name.lower()
+                    
                         product_candidates.append({
-                            "name": full_name,
+                            "name": name,
                             "price": f"R$ {price:.2f}",
-                            "description": full_name.lower(),
-                            "image_url": block.select_one("img.vtex-product-summary-2-x-imageNormal")["src"] if block.select_one("img.vtex-product-summary-2-x-imageNormal") else None
+                            "description": description,
+                            "image_url": img,
+                            "raw": card
                         })
+
         
                 else:
                     # — Rappi / Pão de Açúcar JSON logic goes here —
