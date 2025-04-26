@@ -330,7 +330,47 @@ def save_recipe(payload: dict):
         raise HTTPException(status_code=500, detail="Failed to save recipe")
 
     return {"status": "success"}
-    
+
+@app.get("/saved-recipes/{user_id}")
+def get_saved_recipes(user_id: str):
+    # 1) Load the user
+    user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}/{user_id}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    user_resp = requests.get(user_url, headers=headers)
+    if user_resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch user record")
+    user_fields = user_resp.json().get("fields", {})
+
+    # 2) Grab the list of saved-recipe record IDs
+    saved_ids = user_fields.get("SavedRecipes", [])
+    if not saved_ids:
+        return []
+
+    # 3) Batch fetch those recipes
+    recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    # use the `records[]` param to pull by record ID
+    params = [("records[]", rid) for rid in saved_ids]
+    # only need the JSON + Title fields
+    params += [("fields[]", "Recipe JSON"), ("fields[]", "Title")]
+    resp = requests.get(recipes_url, headers=headers, params=params)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=500, detail="Failed to fetch saved recipes")
+
+    # 4) Parse and return
+    output = []
+    for rec in resp.json().get("records", []):
+        f = rec.get("fields", {})
+        try:
+            parsed = json.loads(f.get("Recipe JSON", "{}"))
+        except Exception:
+            parsed = {}
+        output.append({
+            "id": rec["id"],
+            "title": parsed.get("title", f.get("Title")),
+            "cook_time_minutes": parsed.get("cookTimeMinutes"),
+            "ingredients": parsed.get("ingredients")
+        })
+    return output
 
 @app.post("/interact")
 def save_interaction(interaction: UserInteraction):
@@ -834,34 +874,6 @@ def resend_rappi_cart():
     # Re-run with last payload
     return rappi_cart_search(**cached_last_payload)
 
-
-
-@app.get("/saved-recipes/{user_id}")
-def get_saved_recipes(user_id: str):
-    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
-    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-    params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-
-    response = requests.get(url, headers=headers, params=params)
-    if response.status_code != 200:
-        raise HTTPException(status_code=500, detail="Failed to fetch saved recipes")
-
-    records = response.json().get("records", [])
-    output = []
-    for r in records:
-        fields = r.get("fields", {})
-        try:
-            parsed_json = json.loads(fields.get("Recipe JSON", "{}"))
-            output.append({
-                "id": r["id"],
-                "title": parsed_json.get("title", fields.get("Title")),
-                "cook_time_minutes": parsed_json.get("cookTimeMinutes"),
-                "ingredients": parsed_json.get("ingredients")
-            })
-        except Exception as e:
-            logger.warning(f"[saved-recipes] Failed to parse recipe JSON: {e}")
-            continue
-    return output
 
 def classify_image_multiple(images):
     print(f"[DEBUG] Classifying {len(images)} images")
