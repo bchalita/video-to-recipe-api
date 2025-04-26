@@ -1191,7 +1191,7 @@ def rappi_cart_search(
                     "translated":full_pt,
                     "product_name":chosen_product['name'],
                     "price":chosen_product['price'],
-                    "image_url":chosen['image_url'],
+                    "image_url":chosen_product['image_url'],
                     "quantity_needed":qty_raw,
                     "quantity_needed_display":f"{units} x {qp}g",
                     "quantity_per_unit":qp,
