@@ -1170,7 +1170,7 @@ def rappi_cart_search(
                     )
                 else:
                     units_needed = 1
-                    needed_display = quantity_needed_raw or ""
+                    needed_display = qty_raw or ""
             
                 # ─── totals & excess ───────────────────────────────────────────────────────
                 total_cost = units_needed * float(chosen_product["price"]
