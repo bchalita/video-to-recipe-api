@@ -916,7 +916,8 @@ Output strict JSON array, where each item is:
   "search_base": "<noun in Portuguese>",
   "qualifiers": ["<qual1>", "<qual2>", ...]
 }
-Return only the JSON, no extra text.
+Do NOT wrap your output in triple-backtick code fences or annotate it with json.
+Return only the raw JSON array.
 """
 
 SEARCH_TERM_PROMPT = """
