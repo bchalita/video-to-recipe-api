@@ -1025,6 +1025,9 @@ def rappi_cart_search(
     store_urls = {"Zona Sul":"https://www.zonasul.com.br"}
     store_carts = {store: [] for store in store_urls}
     seen = set()
+        # … after store_urls/store_carts …
+    headers = {"User-Agent": "Mozilla/5.0"}
+
 
     # 3️⃣ Loop each translated ingredient
     for idx, trans in enumerate(translations):
