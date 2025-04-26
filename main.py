@@ -1087,23 +1087,34 @@ def rappi_cart_search(
                     # grab the VTEX product-summary cards
                     cards = soup.select("article.vtex-product-summary-2-x-element")
                     for card in cards[:5]:
-                        # name
-                        name_el = card.select_one("span.vtex-product-summary-2-x-brandName")
+                        # name (brandName first, fallback into the <h2> wrapper)
+                        name_el = (
+                            card.select_one("span.vtex-product-summary-2-x-brandName")
+                            or card.select_one("h2.vtex-product-summary-2-x-productNameContainer span")
+                        )
                         if not name_el:
-                            # fallback in case class changed
-                            name_el = card.select_one("h2.vtex-product-summary-2-x-productNameContainer span")
+                            continue
                         name = name_el.get_text(strip=True)
                     
-                        # price integer + fraction
-                        int_el = card.select_one("span.zonasul-fixed-price-0-x-currencyInteger")
-                        frac_el = card.select_one("span.zonasul-fixed-price-0-x-currencyFraction")
+                        # price integer + fraction (Zona Sul fixed-price first, then VTEX generic)
+                        int_el = (
+                            card.select_one("span.zonasul-fixed-price-0-x-currencyInteger")
+                            or card.select_one("span.vtex-product-summary-2-x-currencyInteger")
+                        )
+                        frac_el = (
+                            card.select_one("span.zonasul-fixed-price-0-x-currencyFraction")
+                            or card.select_one("span.vtex-product-summary-2-x-currencyFraction")
+                        )
                         if not int_el:
-                            # VTEX generic selectors
-                            int_el = card.select_one("span.vtex-product-summary-2-x-currencyInteger")
-                            frac_el = card.select_one("span.vtex-product-summary-2-x-currencyFraction")
-                        price = float(f"{int_el.text.strip()}.{(frac_el.text if frac_el else '00').strip()}")
+                            # no integer part → skip this card
+                            continue
+                        price = float(
+                            f"{int_el.text.strip()}.{(frac_el.text.strip() if frac_el else '00')}"
+                        )
                     
-                        img = card.select_one("img.vtex-product-summary-2-x-imageNormal")["src"]
+                        # image & description
+                        img_el = card.select_one("img.vtex-product-summary-2-x-imageNormal")
+                        img = img_el["src"] if (img_el and img_el.has_attr("src")) else None
                         description = name.lower()
                     
                         product_candidates.append({
