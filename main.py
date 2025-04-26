@@ -1064,8 +1064,8 @@ def rappi_cart_search(
 
         # parse needed mass
         qty_raw = quantities[idx] if quantities and idx < len(quantities) else ""
-        required_val, req_unit = parse_required_quantity(qty_raw)
-        est_mass = estimate_mass(orig, req_unit, required_val) if required_val else None
+        quantity_needed_val, quantity_needed_unit = parse_required_quantity(qty_raw)
+        estimated_needed_val = estimate_mass(... ) if quantity_needed_val else None
 
         # 4️⃣ For each store, try terms
         for store, url in store_urls.items():
@@ -1151,30 +1151,46 @@ def rappi_cart_search(
                     logger.warning(f"[{orig} @ {store}] ❌ Eval failed or null – falling back to top result")
                     chosen_product = product_candidates[0]
 
-                # compute units
-                qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", chosen['name'].lower())
+                    # ─── extract quantity_per_unit via regex ────────────────────────────────────
+                qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", chosen_product["name"].lower())
                 if qm:
-                    v,u = float(qm.group(1).replace(',','.')),qm.group(2)
-                    qp = int(v * ({'kg':1000,'g':1,'unidade':1,'un':1}[u]))
+                    val = float(qm.group(1).replace(",", "."))
+                    unit = qm.group(2)
+                    factor = {"kg": 1000, "g": 1, "unidade": 1, "un": 1}.get(unit, 1)
+                    quantity_per_unit = int(val * factor)
                 else:
-                    qp = 500
-                if est_mass:
-                    units = max(1,int(est_mass//qp + 0.999))
-                    total_qty = units * qp
-                    excess = total_qty - est_mass
+                    quantity_per_unit = 500
+            
+                # ─── compute how many units to buy & display string ─────────────────────────
+                if estimated_needed_val is not None:
+                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                    needed_display = (
+                        format_unit_display(quantity_needed_val, quantity_needed_unit)
+                        + f" (~{int(estimated_needed_val)}g)"
+                    )
                 else:
-                    units, excess = 1, None
-                total_cost = units * float(chosen['price'].replace('R$','').replace(',','.'))
+                    units_needed = 1
+                    needed_display = quantity_needed_raw or ""
+            
+                # ─── totals & excess ───────────────────────────────────────────────────────
+                total_cost = units_needed * float(chosen_product["price"]
+                                                  .replace("R$", "")
+                                                  .replace(",", "."))
+                total_quantity = units_needed * quantity_per_unit
+                if estimated_needed_val is not None:
+                    excess = total_quantity - estimated_needed_val
+                else:
+                    excess = None
 
-                key = (store, orig, chosen['name'])
+                key = (store, orig, chosen_product['name'])
                 if key in seen: break
                 seen.add(key)
 
                 store_carts[store].append({
                     "ingredient":orig,
                     "translated":full_pt,
-                    "product_name":chosen['name'],
-                    "price":chosen['price'],
+                    "product_name":chosen_product['name'],
+                    "price":chosen_product['price'],
                     "image_url":chosen['image_url'],
                     "quantity_needed":qty_raw,
                     "quantity_needed_display":f"{units} x {qp}g",
@@ -1185,7 +1201,7 @@ def rappi_cart_search(
                     "excess_quantity":excess
                 })
 
-                logger.info(f"[rappi-cart][{orig} @ {store}] ✅ Added: {chosen['name']}")
+                logger.info(f"[rappi-cart][{orig} @ {store}] ✅ Added: {chosen_product['name']}")
                 added = True
                 break
             if not added:
