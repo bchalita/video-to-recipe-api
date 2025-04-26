@@ -994,16 +994,30 @@ def rappi_cart_search(
 ):
     # 1️⃣ Translate ingredients
     payload = {"ingredients": ingredients}
-    translation_resp = client.chat.completions.create(
+    translation_resp = client.chat.completions.create(        
         model="gpt-4o",
         messages=[
-            {"role":"system","content":TRANSLATION_PROMPT},
-            {"role":"user","content":json.dumps(ingredients)}
+            {"role": "system", "content": TRANSLATION_PROMPT},
+            {
+              "role": "user",
+              "content": (
+                  "Translate and structure the following ingredients into the JSON schema I described:\n"
+                  + json.dumps(ingredients, ensure_ascii=False)
+              )
+            }
         ],
         max_tokens=300
     )
     raw_trans = translation_resp.choices[0].message.content.strip()
-    translations = json.loads(clean_gpt_json_response(raw_trans))
+    if not raw_trans:
+        logger.error("[rappi-cart] ⚠️ Empty translation response from GPT")
+        raise HTTPException(status_code=500, detail="No translation returned from GPT")
+    try:
+        translations = json.loads(clean_gpt_json_response(raw_trans))
+    except json.JSONDecodeError:
+        logger.error(f"[rappi-cart] ⚠️ Failed to parse translation JSON:\n{raw_trans}")
+        raise HTTPException(status_code=500, detail="Invalid JSON from translation step")
+ 
     logger.info(f"[rappi-cart] Translations: {translations}")
 
     # 2️⃣ Prepare stores
