@@ -1081,7 +1081,7 @@ def rappi_cart_search(
         
                 if "zonasul.com.br" in url:
                     # 1️⃣ Build & log the search URL
-                    search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+                    search_url = f"https://www.zonasul.com.br/{term.replace(' ','%20')}?_q={term.replace(' ','%20')}&map=ft"
                     logger.info(f"[rappi-cart][{orig} @ {store}] ➤ Full URL: {search_url}")
                 
                     r = requests.get(search_url, headers=headers, timeout=10)
@@ -1100,6 +1100,8 @@ def rappi_cart_search(
                             card.select_one("span.vtex-product-summary-2-x-brandName") 
                             or card.select_one("h2.vtex-product-summary-2-x-productNameContainer span")
                         )
+                        logger.debug(f"[{orig} @ {store}] card #{idx} — raw HTML snippet:\n{card.prettify()}")
+
                         if not name_el:
                             logger.debug(f"[{orig} @ {store}] card #{idx} → no name element, skipping")
                             continue
@@ -1144,7 +1146,21 @@ def rappi_cart_search(
                     if not product_candidates:
                         logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ no candidates after scraping")
                         continue
-
+                    # — FILTER BY search_base + qualifiers —
+                    filtered = []
+                    sb = search_base.lower()
+                    quals = [q.lower() for q in qualifiers]
+                    for c in product_candidates:
+                        n = c["name"].lower()
+                        if sb not in n:
+                            logger.debug(f"[{orig} @ {store}] dropping '{c['name']}' (no '{sb}' in name)")
+                            continue
+                        if quals and not any(q in n for q in quals):
+                            logger.debug(f"[{orig} @ {store}] dropping '{c['name']}' (none of {quals} present)")
+                            continue
+                        filtered.append(c)
+                    logger.info(f"[{orig} @ {store}] ▶️ {len(filtered)}/{len(product_candidates)} remain after filtering")
+                    product_candidates = filtered
 
         
                 else:
