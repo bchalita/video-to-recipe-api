@@ -740,7 +740,7 @@ def rappi_cart_search(
                         continue
         
                     # 2️⃣ Ask GPT to pick exactly one of them:
-                    gpt_prompt = [
+                    EVALUATION_PROMPT = [
                         {"role": "system", "content": (
                             "You are a product evaluator for a grocery shopping app.\n"
                             "You receive:\n"
@@ -762,105 +762,99 @@ def rappi_cart_search(
                             "or\n"
                             "{ \"chosen_id\": null }"
                         )},
-                        {"role": "user", "content": json.dumps({
-                            "candidates": [
-                                {
-                                    "id": str(i),
-                                    "title": c["name"],
-                                    "department": "Unknown"  # (put real department if you scrape it)
-                                }
-                                for i, c in enumerate(product_candidates)
-                            ],
-                            "search_base": search_base,
-                            "qualifiers": qualifiers
-                        })}
                     ]
 
-                    response = client.chat.completions.create(
-                    model="gpt-4o",
-                    messages=gpt_prompt,
-                    temperature=0,
-                    max_tokens=100
-                )
-                
-                response_text = response.choices[0].message.content.strip()
-                logger.info(f"[{original} @ {store}] 🧠 GPT raw reply: {response_text}")
-                
-                try:
-                    eval_result = json.loads(clean_gpt_json_response(response_text))
-                    chosen_idx = eval_result.get("chosen_id")
-                
-                    if chosen_idx is None:
-                        logger.warning(f"[{original} @ {store}] ❌ GPT rejected all products – falling back to top result")
-                        chosen_product = product_candidates[0]
-                    else:
-                        chosen_idx = int(chosen_idx)
-                        if chosen_idx < 0 or chosen_idx >= len(product_candidates):
-                            logger.warning(f"[{original} @ {store}] ⚠️ GPT chose invalid index {chosen_idx} – falling back to top result")
-                            chosen_product = product_candidates[0]
-                        else:
-                            chosen_product = product_candidates[chosen_idx]
-                
-                except Exception as e:
-                    logger.error(f"[{original} @ {store}] ❌ Failed to parse GPT evaluation response: {str(e)} — falling back to top result")
-                    chosen_product = product_candidates[0]
-
-        
-                # 4️⃣ Now compute quantity & cost exactly as before:
-                product_name = chosen_product["name"]
-                price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
-                
-                # extract quantity_per_unit via regex on product_name or raw_block…
-                qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
-                if qm:
-                    val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
-                    factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
-                    quantity_per_unit = int(val * factor)
-                else:
-                    quantity_per_unit = 500
-                
-                # --- EXPLICIT None check here ---
-                if estimated_needed_val is not None:
-                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                    excess = total_quantity - estimated_needed_val  # use below
-                    # build display with the "~g" suffix
-                    needed_display = (
-                        format_unit_display(quantity_needed_val, quantity_needed_unit)
-                        + f" (~{int(estimated_needed_val)}g)"
+                    # 2️⃣ Ask GPT to evaluate JSON-style:
+                    eval_messages = [
+                        {"role": "system", "content": EVALUATION_PROMPT},
+                        {"role": "user", "content": json.dumps({
+                            "candidates": [
+                                {"id": idx, "title": c["name"], "department": c.get("department", "")}
+                                for idx, c in enumerate(product_candidates)
+                            ],
+                            "search_base": search_base,       # from your translation step
+                            "qualifiers": qualifiers          # from your translation step
+                        })}
+                    ]
+                    eval_resp = client.chat.completions.create(
+                        model="gpt-4o",
+                        messages=eval_messages,
+                        temperature=0,
+                        max_tokens=150
                     )
-                else:
-                    units_needed = 1
-                    excess = None
-                    needed_display = quantity_needed_raw or ""
-                
-                total_cost = units_needed * price
-                total_quantity = units_needed * quantity_per_unit
-                
-                key = (store, translated, product_name.lower())
-                if key in seen_items:
-                    logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
-                    continue
-                seen_items.add(key)
-                
-                store_carts[store].append({
-                    "ingredient": original,
-                    "translated": translated,
-                    "product_name": product_name,
-                    "price": f"R$ {price:.2f}",
-                    "image_url": chosen_product["image_url"],
-                    "quantity_needed": quantity_needed_raw,
-                    "quantity_needed_display": needed_display,
-                    "quantity_unit": "",
-                    "quantity_per_unit": quantity_per_unit,
-                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
-                    "units_to_buy": units_needed,
-                    "total_quantity_added": total_quantity,
-                    "total_cost": f"R$ {total_cost:.2f}",
-                    "excess_quantity": excess
-                })
-                logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
-                
-                found = True
+                    eval_text = eval_resp.choices[0].message.content.strip()
+                    logger.info(f"[{original} @ {store}] 🧠 GPT raw evaluation reply: {eval_text}")
+
+                    try:
+                        eval_json = json.loads(clean_gpt_json_response(eval_text))
+                        chosen_idx = eval_json.get("chosen_id")
+                        if chosen_idx is None:
+                            raise ValueError("chosen_id is null")
+                        chosen_idx = int(chosen_idx)
+                        if not 0 <= chosen_idx < len(product_candidates):
+                            raise IndexError(f"chosen_id {chosen_idx} out of range")
+                        chosen_product = product_candidates[chosen_idx]
+                    except Exception as e:
+                        logger.warning(
+                            f"[{original} @ {store}] ❌ Evaluation JSON parse error ({e}); falling back to top result"
+                        )
+                        chosen_product = product_candidates[0]
+
+                    # 4️⃣ Now compute quantity & cost exactly as before:
+                    product_name = chosen_product["name"]
+                    price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
+
+                    # extract quantity_per_unit via regex on product_name or raw_block…
+                    qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
+                    if qm:
+                        val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
+                        factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
+                        quantity_per_unit = int(val * factor)
+                    else:
+                        quantity_per_unit = 500
+
+                    # --- EXPLICIT None check here ---
+                    if estimated_needed_val is not None:
+                        units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                        excess = total_quantity - estimated_needed_val  # use below
+                        # build display with the "~g" suffix
+                        needed_display = (
+                            format_unit_display(quantity_needed_val, quantity_needed_unit)
+                            + f" (~{int(estimated_needed_val)}g)"
+                        )
+                    else:
+                        units_needed = 1
+                        excess = None
+                        needed_display = quantity_needed_raw or ""
+
+                    total_cost = units_needed * price
+                    total_quantity = units_needed * quantity_per_unit
+
+                    key = (store, translated, product_name.lower())
+                    if key in seen_items:
+                        logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
+                        continue
+                    seen_items.add(key)
+
+                    store_carts[store].append({
+                        "ingredient": original,
+                        "translated": translated,
+                        "product_name": product_name,
+                        "price": f"R$ {price:.2f}",
+                        "image_url": chosen_product["image_url"],
+                        "quantity_needed": quantity_needed_raw,
+                        "quantity_needed_display": needed_display,
+                        "quantity_unit": "",
+                        "quantity_per_unit": quantity_per_unit,
+                        "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+                        "units_to_buy": units_needed,
+                        "total_quantity_added": total_quantity,
+                        "total_cost": f"R$ {total_cost:.2f}",
+                        "excess_quantity": excess
+                    })
+                    logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
+
+                    found = True
 
     
             # 5️⃣ After we’ve exhausted all terms for this store…
