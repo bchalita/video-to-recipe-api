@@ -898,7 +898,7 @@ def get_known_ingredients_and_dishes():
 async def upload_video(
     file: UploadFile = File(None),
     tiktok_url: str = Form(None),
-    user_id: Optional[str] = Form(None)
+    user_id: Optional[str] = Form(None)  # <-- this must be the Airtable record ID
 ):
     temp_dir = None
     description = ""
@@ -981,81 +981,51 @@ async def upload_video(
         )
 
         combined = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
-        print(f"[DEBUG] Raw GPT response (first 500 chars):\n{combined[:500]}")
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined, re.DOTALL)
+        parsed = json.loads(match.group(1).strip() if match else combined)
 
-        try:
-            parsed = json.loads(match.group(1).strip() if match else combined)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Failed to parse GPT output: {str(e)}")
-
-        recipe_title = parsed.get("title") or "Recipe"
-        ingredients = parsed.get("ingredients")
-        steps = parsed.get("steps")
+        recipe_title      = parsed.get("title") or "Recipe"
+        ingredients       = parsed.get("ingredients")
+        steps             = parsed.get("steps")
         cook_time_minutes = parsed.get("cook_time_minutes")
 
-        try:
-            filename = f"{str(uuid.uuid4())}.mp4"
-            shutil.copy(video_path, filename)
-
-            payload = {
-                "fields": {
-                    "Title": recipe_title,
-                    "Steps": json.dumps(steps),
-                    "Ingredients": json.dumps(ingredients),
-                    "Recipe JSON": json.dumps(parsed)
-                }
+        # ——— BUILD YOUR AIRTABLE PAYLOAD ———
+        payload = {
+            "fields": {
+                "Title": recipe_title,
+                "Steps": json.dumps(steps),
+                "Ingredients": json.dumps(ingredients),
+                "Recipe JSON": json.dumps(parsed),
             }
+        }
 
-            if user_id:
-                print(f"[DEBUG] Looking for user with UUID: {user_id}")
+        # **SIMPLIFIED LINKING**: just use the Airtable record-ID you passed in
+        if user_id:
+            payload["fields"]["User ID"] = [user_id]
 
-                headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
-                params = {"filterByFormula": f"{{User ID}} = '{user_id}'"}
-                user_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_USERS_TABLE}"
-                user_response = requests.get(user_url, headers=headers, params=params)
+        # send it up to Airtable
+        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+        headers = {
+            "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        response = requests.post(url, headers=headers, json=payload)
+        if response.status_code not in (200, 201):
+            logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
+            raise HTTPException(status_code=500, detail="Failed to save recipe")
 
-                try:
-                    response_json = user_response.json()
-                    print("[DEBUG] Airtable user lookup result:", json.dumps(response_json, indent=2))
-                except Exception as e:
-                    print(f"[ERROR] Failed to parse user response JSON: {str(e)}")
-
-                if user_response.status_code == 200 and response_json.get("records"):
-                    airtable_record_id = response_json["records"][0]["id"]
-                    payload["fields"]["User ID"] = [airtable_record_id]  # ✅ Properly include linked User ID
-                    print(f"[DEBUG] Found Airtable user record ID: {airtable_record_id}")
-                else:
-                    print("[DEBUG] No matching user found in Airtable or bad response.")
-
-            url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-            headers = {
-                "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-                "Content-Type": "application/json"
+        return {
+            "title": recipe_title,
+            "ingredients": ingredients,
+            "steps": steps,
+            "cook_time_minutes": cook_time_minutes,
+            "debug": {
+                "frames_processed": len(frames),
             }
-            response = requests.post(url, headers=headers, json=payload)
-
-            if response.status_code not in (200, 201):
-                logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
-                raise HTTPException(status_code=500, detail="Failed to save recipe")
-
-            return {
-                "title": recipe_title,
-                "ingredients": ingredients,
-                "steps": steps,
-                "cook_time_minutes": cook_time_minutes,
-                "debug": {
-                    "frames_processed": len(frames),
-                    "model_hint": guess_id or "n/a"
-                }
-            }
-
-        except Exception as e:
-            logger.error(f"[upload-video] Error: {str(e)}")
-            raise HTTPException(status_code=500, detail=str(e))
+        }
 
     except Exception as e:
-        import traceback; traceback.print_exc()
+        logger.error(f"[upload-video] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
     finally:
