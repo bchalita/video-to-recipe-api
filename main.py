@@ -1070,6 +1070,7 @@ def rappi_cart_search(
         # 4️⃣ For each store, try terms
         for store, url in store_urls.items():
             found = False
+            added = False
         
             for term in search_terms:
                 if found:
