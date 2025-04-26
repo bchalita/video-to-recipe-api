@@ -1065,7 +1065,7 @@ def rappi_cart_search(
         # parse needed mass
         qty_raw = quantities[idx] if quantities and idx < len(quantities) else ""
         quantity_needed_val, quantity_needed_unit = parse_required_quantity(qty_raw)
-        estimated_needed_val = estimate_mass(... ) if quantity_needed_val else None
+        estimated_needed_val = estimate_mass(orig, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
 
         # 4️⃣ For each store, try terms
         for store, url in store_urls.items():
