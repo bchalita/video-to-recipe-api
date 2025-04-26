@@ -1196,7 +1196,7 @@ def rappi_cart_search(
                     "quantity_needed_display":f"{units_needed} x {quantity_per_unit}g",
                     "quantity_per_unit":quantity_per_unit,
                     "units_to_buy":units_needed,
-                    "total_quantity_added":units_needed*qp,
+                    "total_quantity_added":units_needed*quantity_per_unit,
                     "total_cost":f"R$ {total_cost:.2f}",
                     "excess_quantity":excess
                 })
