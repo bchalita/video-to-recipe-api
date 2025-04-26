@@ -1006,7 +1006,7 @@ def rappi_cart_search(
               )
             }
         ],
-        max_tokens=300
+        max_tokens=800
     )
     raw_trans = translation_resp.choices[0].message.content.strip()
     if not raw_trans:
@@ -1133,7 +1133,7 @@ def rappi_cart_search(
                     }, ensure_ascii=False)}
                 ]
                 eval_resp = client.chat.completions.create(
-                    model="gpt-4o", messages=eval_messages, temperature=0, max_tokens=150
+                    model="gpt-4o", messages=eval_messages, temperature=0, max_tokens=300
                 )
                 raw_eval = eval_resp.choices[0].message.content.strip()
                 try:
