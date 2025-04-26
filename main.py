@@ -494,14 +494,34 @@ def rappi_cart_search(
             ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
 
         prompt = [
-            {"role": "system", "content": (
-                "You are a food translation expert. Translate each ingredient into the common name as used in Brazilian supermarkets. "
-                "Use product terminology that aligns with shopping categories (e.g., 'pasta' should become 'macarrão', not 'massa'). "
-                "Return only a JSON array."
-            )},
-            {"role": "user", "content": f"Translate to Portuguese: {json.dumps(ingredients)}"}
+            {
+                "role": "system",
+                "content": (
+                    "You are a translation assistant for a grocery shopping app.\n"
+                    "Your job is to take each English ingredient name and produce:\n"
+                    "  - A Portuguese translation suitable for Zona Sul.\n"
+                    "  - A 'search_base' — the generic noun in Portuguese to use for broader searches.\n"
+                    "  - A list of any qualifiers (adjectives or preparations) to refine searches.\n\n"
+                    "Instructions:\n"
+                    "- Preserve important adjectives (e.g., fresco, integral, vegano).\n"
+                    "- Remove true parentheticals (e.g., '(for greasing the dish)').\n"
+                    "- Extract preparations like 'minced', 'diced' into qualifiers.\n"
+                    "- If the input has no adjectives or preparation terms, qualifiers list can be empty.\n\n"
+                    "Output strict JSON array. Each item must be:\n"
+                    "{\n"
+                    '  "original": "<exact English input>",\n'
+                    '  "translated": "<full Portuguese phrase>",\n'
+                    '  "search_base": "<noun in Portuguese>",\n'
+                    '  "qualifiers": ["<qualifier1>", "<qualifier2>", ...]\n'
+                    "}\n"
+                    "Do not include any text before or after the JSON."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Translate and structure the following ingredients: {json.dumps(ingredients)}"
+            }
         ]
-
         translation_response = client.chat.completions.create(
             model="gpt-4o",
             messages=prompt,
@@ -576,32 +596,37 @@ def rappi_cart_search(
             base_term = translated.split()[0]
             search_terms = [translated]
             # 🔍 Log the full search terms being used for this ingredient
-            logger.info(f"[rappi-cart][{original}] Search terms (base + fallback): {search_terms}")
+            logger.info(f"[rappi-cart][{original}] Search base: {search_base}, Qualifiers: {qualifiers}")
 
+            search_base = translated["search_base"]
+            qualifiers = translated.get("qualifiers", [])
+            
             fallback_prompt = [
                 {
                     "role": "system",
                     "content": (
-                                "You are a grocery search expert fluent in Brazilian Portuguese. "
-                                "Your task is to translate each English ingredient into up to 5 highly relevant Brazilian Portuguese product search terms. "
-                                "Think like a picky customer typing into the search bar — you want the most accurate, buyable item on the first try. "
-                                "- **First term must be the singular root** of the ingredient (e.g. 'alho' for 'garlic').  \n"
-                                "- Then more specific forms ('alho fresco', 'alho descascado') if needed.  \n"
-                                "- **Do not** include words that clash with non-food categories (e.g. 'dentes').  \n"
-                                "Use context from the recipe to avoid irrelevant or generic items. " 
-                                "For example, you know from a steak frittes recipe that you are looking for a good cut of meat "
-                                "For example you know that a Tuna tartar will use the fresh tuna fish and not 'atum em lata'"
-                                "For example, always prioritize the item on its own, avoiding 'mixturas' or item combinations unless explicitily prompted to"
-                                "For example: do not return 'molho de tomate' for 'tomato', or 'alho poró' for 'garlic'. "
-                                "Stick to fresh, common supermarket terms unless otherwise clear from context. "
-                                "Given the 5 selections, be wise on which are the most relevant. "
-                                "Output only a valid JSON list of 5 or fewer strings. No explanation, no formatting, no commentary."
-                            )
+                        "System: You are a search‐term generator for Zona Sul grocery items.\n"
+                        "Input is a JSON object with:\n"
+                        "  • \"search_base\" (generic noun, e.g. \"alho\")\n"
+                        "  • \"qualifiers\" (list, e.g. [\"fresco\", \"picado\"])\n\n"
+                        "Rules:\n"
+                        "  1. First term must be the **exact** full Portuguese phrase:\n"
+                        "     search_base + all qualifiers joined in natural order.\n"
+                        "  2. Second term should be **only** the search_base noun.\n"
+                        "  3. Then generate up to three more combinations of search_base + single qualifiers,\n"
+                        "     ordered by likely availability (e.g., “creme de leite fresco”, “creme de leite integral”).\n"
+                        "  4. No hard‐coded overrides—entirely driven by input fields.\n\n"
+                        "Return a JSON array of up to 5 strings."
+                    )
                 },
+                {
+                    "role": "user",
+                    "content": json.dumps({
+                        "search_base": search_base,
+                        "qualifiers": qualifiers
+                    }, ensure_ascii=False)
+                }
             ]
-
-            fallback_prompt.append({"role": "user", "content": f"Term: '{translated}'"})
-
 
             fallback_response = client.chat.completions.create(
                 model="gpt-4o",
@@ -618,10 +643,13 @@ def rappi_cart_search(
             except Exception as e:
                 logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
                 fallback_list = []
+            
             search_terms.extend(fallback_list)
+            
+            # Corrected name: use search_base not base_term
+            if search_base.lower() not in [term.lower() for term in search_terms]:
+                search_terms.append(search_base)
 
-            if base_term.lower() not in [term.lower() for term in search_terms]:
-                search_terms.append(base_term)
 
             quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
             quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
@@ -714,115 +742,130 @@ def rappi_cart_search(
                     # 2️⃣ Ask GPT to pick exactly one of them:
                     gpt_prompt = [
                         {"role": "system", "content": (
-                            "You're helping someone shop online for groceries in Brazil. "
-                            "From the list of available products, select the **single** best match "
-                            "for the ingredient mentioned. Reply only with the product name. "
-                            "If none are acceptable, return 'REJECT'."
+                            "You are a product evaluator for a grocery shopping app.\n"
+                            "You receive:\n"
+                            "- candidates: a list of product objects, each with:\n"
+                            "  - \"id\": string\n"
+                            "  - \"title\": string\n"
+                            "  - \"department\": string (example: \"Frios & Laticínios\")\n"
+                            "- search_base: the generic noun expected (example: \"creme de leite\")\n"
+                            "- qualifiers: list of descriptors (example: [\"fresco\"])\n\n"
+                            "Instructions:\n"
+                            "1. Accept only products whose title contains search_base.\n"
+                            "2. If qualifiers exist, prefer products whose title contains at least one.\n"
+                            "3. Department must make sense (e.g., \"creme de leite\" should be in dairy, not personal care).\n"
+                            "4. Reject any sponsored, irrelevant, or obviously wrong products (e.g., toothpaste, detergent).\n"
+                            "5. If multiple good matches, pick the best overlap with search_base + qualifiers.\n"
+                            "6. If nothing fits well, return null.\n\n"
+                            "Output strict JSON:\n"
+                            "{ \"chosen_id\": \"<best id>\" }\n"
+                            "or\n"
+                            "{ \"chosen_id\": null }"
                         )},
-                        {"role": "user", "content": (
-                            f"Ingredient: {original}\n\n"
-                            "Available products:\n" +
-                            "\n".join(
-                                f"{i+1}. {c['name']} — {c['price']} — {c['description']}"
+                        {"role": "user", "content": json.dumps({
+                            "candidates": [
+                                {
+                                    "id": str(i),
+                                    "title": c["name"],
+                                    "department": "Unknown"  # (put real department if you scrape it)
+                                }
                                 for i, c in enumerate(product_candidates)
-                            )
-                        )}
+                            ],
+                            "search_base": search_base,
+                            "qualifiers": qualifiers
+                        })}
                     ]
+
                     response = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=gpt_prompt,
-                        temperature=0,
-                        max_tokens=50
-                    )
-                    chosen_name = response.choices[0].message.content.strip()
-                    logger.info(f"[{original} @ {store}] 🧠 GPT chose: {chosen_name}")
-                    
-                    # If GPT rejects everything, or we can't match its exact string,
-                    # fall back to the very first candidate in your scraped list:
-                    if chosen_name == "REJECT" or not any(p["name"] == chosen_name for p in product_candidates):
-                        if chosen_name == "REJECT":
-                            logger.warning(f"[{original} @ {store}] ❌ GPT rejected all products – falling back to top result")
-                        else:
-                            logger.warning(f"[{original} @ {store}] ⚠️ GPT result '{chosen_name}' not found – falling back to top result")
+                    model="gpt-4o",
+                    messages=gpt_prompt,
+                    temperature=0,
+                    max_tokens=100
+                )
+                
+                response_text = response.choices[0].message.content.strip()
+                logger.info(f"[{original} @ {store}] 🧠 GPT raw reply: {response_text}")
+                
+                try:
+                    eval_result = json.loads(clean_gpt_json_response(response_text))
+                    chosen_idx = eval_result.get("chosen_id")
+                
+                    if chosen_idx is None:
+                        logger.warning(f"[{original} @ {store}] ❌ GPT rejected all products – falling back to top result")
                         chosen_product = product_candidates[0]
                     else:
-                        chosen_product = next(p for p in product_candidates if p["name"] == chosen_name)
-                    if not chosen_product:
-                        # fallback fuzzy:
-                        chosen_product = next(
-                            (c for c in product_candidates if chosen_name.lower() in c["name"].lower()),
-                            None
-                        )
-                        if chosen_product:
-                            logger.warning(
-                                f"[rappi-cart][{original} @ {store}] ⚠️ using fuzzy fallback for '{chosen_name}'"
-                            )
+                        chosen_idx = int(chosen_idx)
+                        if chosen_idx < 0 or chosen_idx >= len(product_candidates):
+                            logger.warning(f"[{original} @ {store}] ⚠️ GPT chose invalid index {chosen_idx} – falling back to top result")
+                            chosen_product = product_candidates[0]
                         else:
-                            logger.warning(
-                                f"[rappi-cart][{original} @ {store}] ❌ GPT result '{chosen_name}' not found"
-                            )
-                            continue
-        
-                    # 4️⃣ Now compute quantity & cost exactly as before:
-                    product_name = chosen_product["name"]
-                    price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
-                    
-                    # extract quantity_per_unit via regex on product_name or raw_block…
-                    qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
-                    if qm:
-                        val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
-                        factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
-                        quantity_per_unit = int(val * factor)
-                    else:
-                        quantity_per_unit = 500
-                    
-                    # --- EXPLICIT None check here ---
-                    if estimated_needed_val is not None:
-                        units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                        excess = total_quantity - estimated_needed_val  # use below
-                        # build display with the "~g" suffix
-                        needed_display = (
-                            format_unit_display(quantity_needed_val, quantity_needed_unit)
-                            + f" (~{int(estimated_needed_val)}g)"
-                        )
-                    else:
-                        units_needed = 1
-                        excess = None
-                        needed_display = quantity_needed_raw or ""
-                    
-                    total_cost = units_needed * price
-                    total_quantity = units_needed * quantity_per_unit
-                    
-                    key = (store, translated, product_name.lower())
-                    if key in seen_items:
-                        logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
-                        continue
-                    seen_items.add(key)
-                    
-                    store_carts[store].append({
-                        "ingredient": original,
-                        "translated": translated,
-                        "product_name": product_name,
-                        "price": f"R$ {price:.2f}",
-                        "image_url": chosen_product["image_url"],
-                        "quantity_needed": quantity_needed_raw,
-                        "quantity_needed_display": needed_display,
-                        "quantity_unit": "",
-                        "quantity_per_unit": quantity_per_unit,
-                        "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
-                        "units_to_buy": units_needed,
-                        "total_quantity_added": total_quantity,
-                        "total_cost": f"R$ {total_cost:.2f}",
-                        "excess_quantity": excess
-                    })
-                    logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
-                    
-                    found = True
+                            chosen_product = product_candidates[chosen_idx]
+                
+                except Exception as e:
+                    logger.error(f"[{original} @ {store}] ❌ Failed to parse GPT evaluation response: {str(e)} — falling back to top result")
+                    chosen_product = product_candidates[0]
 
         
-                # 5️⃣ After we’ve exhausted all terms for this store…
-                if not found:
-                    logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No acceptable product found for any term")
+                # 4️⃣ Now compute quantity & cost exactly as before:
+                product_name = chosen_product["name"]
+                price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
+                
+                # extract quantity_per_unit via regex on product_name or raw_block…
+                qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
+                if qm:
+                    val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
+                    factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
+                    quantity_per_unit = int(val * factor)
+                else:
+                    quantity_per_unit = 500
+                
+                # --- EXPLICIT None check here ---
+                if estimated_needed_val is not None:
+                    units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+                    excess = total_quantity - estimated_needed_val  # use below
+                    # build display with the "~g" suffix
+                    needed_display = (
+                        format_unit_display(quantity_needed_val, quantity_needed_unit)
+                        + f" (~{int(estimated_needed_val)}g)"
+                    )
+                else:
+                    units_needed = 1
+                    excess = None
+                    needed_display = quantity_needed_raw or ""
+                
+                total_cost = units_needed * price
+                total_quantity = units_needed * quantity_per_unit
+                
+                key = (store, translated, product_name.lower())
+                if key in seen_items:
+                    logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
+                    continue
+                seen_items.add(key)
+                
+                store_carts[store].append({
+                    "ingredient": original,
+                    "translated": translated,
+                    "product_name": product_name,
+                    "price": f"R$ {price:.2f}",
+                    "image_url": chosen_product["image_url"],
+                    "quantity_needed": quantity_needed_raw,
+                    "quantity_needed_display": needed_display,
+                    "quantity_unit": "",
+                    "quantity_per_unit": quantity_per_unit,
+                    "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+                    "units_to_buy": units_needed,
+                    "total_quantity_added": total_quantity,
+                    "total_cost": f"R$ {total_cost:.2f}",
+                    "excess_quantity": excess
+                })
+                logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
+                
+                found = True
+
+    
+            # 5️⃣ After we’ve exhausted all terms for this store…
+            if not found:
+                logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No acceptable product found for any term")
         
         for store, items in store_carts.items():
             logger.info(f"[Cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
