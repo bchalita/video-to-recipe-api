@@ -1193,10 +1193,10 @@ def rappi_cart_search(
                     "price":chosen_product['price'],
                     "image_url":chosen_product['image_url'],
                     "quantity_needed":qty_raw,
-                    "quantity_needed_display":f"{units} x {qp}g",
+                    "quantity_needed_display":f"{units_needed} x {qp}g",
                     "quantity_per_unit":qp,
-                    "units_to_buy":units,
-                    "total_quantity_added":units*qp,
+                    "units_to_buy":units_needed,
+                    "total_quantity_added":units_needed*qp,
                     "total_cost":f"R$ {total_cost:.2f}",
                     "excess_quantity":excess
                 })
