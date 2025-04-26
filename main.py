@@ -347,7 +347,7 @@ def get_saved_recipes(user_id: str):
         return []
 
     # 3) Batch fetch those recipes
-    recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+    recipes_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_SAVED_RECIPES_TABLE}"
     # use the `records[]` param to pull by record ID
     params = [("records[]", rid) for rid in saved_ids]
     # only need the JSON + Title fields
