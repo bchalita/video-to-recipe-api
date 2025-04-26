@@ -469,414 +469,720 @@ cached_cart_result = None
 cached_last_payload = None
 cached_user_id = None
 
+# @app.post("/rappi-cart")
+# def rappi_cart_search(
+#     ingredients: List[str] = Body(..., embed=True),
+#     recipe_title: Optional[str] = Body(None),
+#     quantities: Optional[List[str]] = Body(None),
+#     user_id: Optional[str] = Body(None)
+# ):
+#     global cached_cart_result, cached_last_payload, cached_user_id
+#     cached_last_payload = {
+#         "ingredients": ingredients,
+#         "recipe_title": recipe_title,
+#         "quantities": quantities,
+#         "user_id": user_id
+#     }
+#     cached_user_id = user_id
+
+#     try:
+#         ingredient_override_map = {
+#             "tuna": "lombo de atum"
+#         }
+
+#         if recipe_title and "tartare" in recipe_title.lower():
+#             ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
+
+#         prompt = [
+#             {
+#                 "role": "system",
+#                 "content": (
+#                     "You are a translation assistant for a grocery shopping app.\n"
+#                     "Your job is to take each English ingredient name and produce:\n"
+#                     "  - A Portuguese translation suitable for Zona Sul.\n"
+#                     "  - A 'search_base' — the generic noun in Portuguese to use for broader searches.\n"
+#                     "  - A list of any qualifiers (adjectives or preparations) to refine searches.\n\n"
+#                     "Instructions:\n"
+#                     "- Preserve important adjectives (e.g., fresco, integral, vegano).\n"
+#                     "- Remove true parentheticals (e.g., '(for greasing the dish)').\n"
+#                     "- Extract preparations like 'minced', 'diced' into qualifiers.\n"
+#                     "- If the input has no adjectives or preparation terms, qualifiers list can be empty.\n\n"
+#                     "Output strict JSON array. Each item must be:\n"
+#                     "{\n"
+#                     '  "original": "<exact English input>",\n'
+#                     '  "translated": "<full Portuguese phrase>",\n'
+#                     '  "search_base": "<noun in Portuguese>",\n'
+#                     '  "qualifiers": ["<qualifier1>", "<qualifier2>", ...]\n'
+#                     "}\n"
+#                     "Do not include any text before or after the JSON."
+#                 )
+#             },
+#             {
+#                 "role": "user",
+#                 "content": f"Translate and structure the following ingredients: {json.dumps(ingredients)}"
+#             }
+#         ]
+#         translation_response = client.chat.completions.create(
+#             model="gpt-4o",
+#             messages=prompt,
+#             max_tokens=300
+#         )
+
+#         translated_text = translation_response.choices[0].message.content.strip()
+#         translated_list = json.loads(clean_gpt_json_response(translated_text))
+
+#         logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
+
+#         headers = {"User-Agent": "Mozilla/5.0"}
+        
+        
+#         #####HIDDEN FOR NOW (JUST ADD BACK TO DICTIONARY)
+
+#         # "Rappi - Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
+#         # "Rappi - Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
+        
+        
+#         store_urls = {
+#             "Zona Sul": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
+#         }
+
+#         store_carts = {store: [] for store in store_urls.keys()}
+
+#         def parse_required_quantity(qty_str):
+#             if not qty_str:
+#                 return None, ""
+#             match = re.match(r"(\d+)(\.?\d*)\\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
+#             if match:
+#                 value = float(match.group(1) + match.group(2))
+#                 unit = match.group(3) or "un"
+#                 factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1, "tbsp": 1, "tsp": 1, "cup": 1, "clove": 1}.get(unit, 1)
+#                 std_val = value * factor
+#                 return std_val, unit
+#             return None, ""
+
+#         def extract_next_data_json(soup):
+#             script = soup.find("script", {"id": "__NEXT_DATA__", "type": "application/json"})
+#             if not script:
+#                 logger.warning("[rappi-cart] Could not find __NEXT_DATA__ script tag")
+#                 return None
+#             try:
+#                 return json.loads(script.string)
+#             except Exception as e:
+#                 logger.warning(f"[rappi-cart] Failed to parse NEXT_DATA: {e}")
+#                 return None
+
+#         def iterate_fallback_products(fallback):
+#             for key, val in fallback.items():
+#                 if isinstance(val, dict) and "products" in val:
+#                     yield from val["products"]
+
+#         def estimate_mass(ingredient_name, unit, value):
+#             key = ingredient_name.lower()
+#             table = {
+#                 "un": {"onion": 200, "garlic": 5, "egg": 50, "lime": 65, "shallot": 50, "nori": 5},
+#                 "tbsp": {"butter": 14, "olive oil": 13, "avocado oil": 13, "sugar": 12, "flour": 8},
+#                 "tsp": {"salt": 6, "pepper": 2, "sugar": 4, "mirin": 5, "soy sauce": 5, "rice wine vinegar": 5},
+#                 "clove": {"garlic": 5},
+#                 "cup": {"milk": 240, "heavy cream": 240, "water": 240, "cherry tomatoes": 150}
+#             }.get(unit, {})
+#             return value * table.get(key, 1)
+        
+#         seen_items = set()
+
+#         for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
+#             if original.lower() in ["water", "água"]:
+#                 continue
+
+#             base_term = translated.split()[0]
+#             search_terms = [translated]
+#             # 🔍 Log the full search terms being used for this ingredient
+#             logger.info(f"[rappi-cart][{original}] Search base: {search_base}, Qualifiers: {qualifiers}")
+
+#             search_base = translated["search_base"]
+#             qualifiers = translated.get("qualifiers", [])
+            
+#             fallback_prompt = [
+#                 {
+#                     "role": "system",
+#                     "content": (
+#                         "System: You are a search‐term generator for Zona Sul grocery items.\n"
+#                         "Input is a JSON object with:\n"
+#                         "  • \"search_base\" (generic noun, e.g. \"alho\")\n"
+#                         "  • \"qualifiers\" (list, e.g. [\"fresco\", \"picado\"])\n\n"
+#                         "Rules:\n"
+#                         "  1. First term must be the **exact** full Portuguese phrase:\n"
+#                         "     search_base + all qualifiers joined in natural order.\n"
+#                         "  2. Second term should be **only** the search_base noun.\n"
+#                         "  3. Then generate up to three more combinations of search_base + single qualifiers,\n"
+#                         "     ordered by likely availability (e.g., “creme de leite fresco”, “creme de leite integral”).\n"
+#                         "  4. No hard‐coded overrides—entirely driven by input fields.\n\n"
+#                         "Return a JSON array of up to 5 strings."
+#                     )
+#                 },
+#                 {
+#                     "role": "user",
+#                     "content": json.dumps({
+#                         "search_base": search_base,
+#                         "qualifiers": qualifiers
+#                     }, ensure_ascii=False)
+#                 }
+#             ]
+
+#             fallback_response = client.chat.completions.create(
+#                 model="gpt-4o",
+#                 messages=fallback_prompt,
+#                 max_tokens=100
+#             )
+#             fallback_text = fallback_response.choices[0].message.content.strip()
+#             logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
+            
+#             try:
+#                 fallback_list = json.loads(clean_gpt_json_response(fallback_text))
+#                 if not isinstance(fallback_list, list):
+#                     raise ValueError("Fallback is not a JSON list.")
+#             except Exception as e:
+#                 logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
+#                 fallback_list = []
+            
+#             search_terms.extend(fallback_list)
+            
+#             # Corrected name: use search_base not base_term
+#             if search_base.lower() not in [term.lower() for term in search_terms]:
+#                 search_terms.append(search_base)
+
+
+#             quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
+#             quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
+#             estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
+
+
+#             #### NEW VERSION OF LOOP
+#             for store, url in store_urls.items():
+#                 found = False
+        
+#                 # try each search term in turn until we append one product
+#                 for term in search_terms:
+#                     if found:
+#                         break
+        
+#                     # 1️⃣ Build the list of raw product dicts:
+#                     product_candidates = []
+
+#                     ### USE ZONA SUL ONLY FOR NOW
+#                     if "zonasul.com.br" in url:
+#                         search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+#                         logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
+#                         response = requests.get(search_url, headers=headers, timeout=10)
+#                         soup = BeautifulSoup(response.text, "html.parser")
+#                         found = False
+                
+#                         product_blocks = soup.select("article.vtex-product-summary-2-x-element")
+#                         logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
+                
+#                         product_candidates = []
+                        
+#                         for product in product_blocks[:5]:
+#                             name_elem = product.select_one("span.vtex-product-summary-2-x-productBrand")
+#                             image_elem = product.select_one("img.vtex-product-summary-2-x-imageNormal")
+#                             price_int = product.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
+#                             price_frac = product.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
+                        
+#                             if not name_elem or not price_int:
+#                                 continue
+                        
+#                             full_name = name_elem.get_text(strip=True)
+#                             full_price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
+#                             description = full_name.lower()
+                        
+#                             product_candidates.append({
+#                                 "name": full_name,
+#                                 "price": f"R$ {full_price:.2f}",
+#                                 "description": description,
+#                                 "image_url": image_elem.get("src") if image_elem else None,
+#                                 "raw_block": product  # Keep the full block for later reuse
+#                             })
+                        
+#                         if not product_candidates:
+#                             logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
+
+
+
+#                     ##### COMMENTING ON RAPPI SEARCH TO OPTIMIZE TESTING. WILL REVERT BACK LATER
+#                     # else:
+#                     #     # — your existing Rappi JSON logic (Pão de Açúcar) —
+#                     #     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+#                     #     json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
+#                     #     if not json_data:
+#                     #         continue
+#                     #     fallback = json_data["props"]["pageProps"]["fallback"]
+#                     #     for p in iterate_fallback_products(fallback):
+#                     #         name = p["name"].strip()
+#                     #         price = float(str(p["price"]).replace(",", "."))
+#                     #         description = name.lower()
+#                     #         image_raw = p.get("image", "")
+#                     #         image_url = (
+#                     #             image_raw
+#                     #             if image_raw.startswith("http")
+#                     #             else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
+#                     #             if image_raw else None
+#                     #         )
+#                     #         product_candidates.append({
+#                     #             "name": name,
+#                     #             "price": f"R$ {price:.2f}",
+#                     #             "description": description,
+#                     #             "image_url": image_url,
+#                     #             "raw_block": p
+#                     #         })
+#                     #     # (log & continue if product_candidates is empty)
+        
+#                     if not product_candidates:
+#                         logger.warning(f"[rappi-cart][{original} @ {store}] ❌ no candidates for term '{term}'")
+#                         continue
+        
+#                     # 2️⃣ Ask GPT to pick exactly one of them:
+#                     EVALUATION_PROMPT = """
+#                     You are a product evaluator for a grocery shopping app.
+#                     You receive:
+#                     - candidates: a list of product objects, each with:
+#                       - "id": string
+#                       - "title": string
+#                       - "department": string (example: "Frios & Laticínios")
+#                     - search_base: the generic noun expected (example: "creme de leite")
+#                     - qualifiers: list of descriptors (example: ["fresco"])
+                    
+#                     Instructions:
+#                     1. Accept only products whose title contains search_base.
+#                     2. If qualifiers exist, prefer products whose title contains at least one.
+#                     3. Department must make sense (e.g., "creme de leite" should be in dairy, not personal care).
+#                     4. Reject any sponsored, irrelevant, or obviously wrong products (e.g., toothpaste, detergent).
+#                     5. If multiple good matches, pick the best overlap with search_base + qualifiers.
+#                     6. If nothing fits well, return null.
+                    
+#                     Output strict JSON:
+#                     { "chosen_id": "<best id>" }
+#                     or
+#                     { "chosen_id": null }
+#                     """
+
+#                     try:
+#                         raw_trans = translation_response.choices[0].message.content.strip()
+#                         logger.debug(f"[rappi-cart] Raw translation response: {raw_trans}")
+#                         translations = json.loads(clean_gpt_json_response(raw_trans))
+#                         # Expecting something like:
+#                         # [
+#                         #   {"original":"Heavy cream", "translated":"Creme de leite fresco",
+#                         #    "search_base":"creme de leite","qualifiers":["fresco"]},
+#                         #   …
+#                         # ]
+#                     except Exception as e:
+#                         logger.error(f"[rappi-cart] ⚠️ Failed to parse translation JSON: {e}")
+#                         raise HTTPException(status_code=500, detail="Translation JSON malformed")
+            
+#                     # Now zip over translations
+#                     for idx, trans_obj in enumerate(translations):
+#                         original    = trans_obj["original"]
+#                         translated  = trans_obj["translated"]
+#                         search_base = trans_obj["search_base"]
+#                         qualifiers  = trans_obj.get("qualifiers", [])
+            
+#                         # … your quantity‐parsing, skip water, etc. …
+            
+#                         # 2️⃣ Use the JSON evaluator to pick one candidate by index
+#                         eval_messages = [
+#                             {"role": "system",  "content": EVALUATION_PROMPT},
+#                             {"role": "user",    "content": json.dumps({
+#                                 "candidates": [
+#                                     {"id": i, "title": c["name"], "department": c.get("department","")}
+#                                     for i, c in enumerate(product_candidates)
+#                                 ],
+#                                 "search_base": search_base,
+#                                 "qualifiers": qualifiers
+#                             })}
+#                         ]
+#                         eval_resp = client.chat.completions.create(
+#                             model="gpt-4o",
+#                             messages=eval_messages,
+#                             temperature=0,
+#                             max_tokens=150
+#                         )
+#                         raw_eval = eval_resp.choices[0].message.content.strip()
+#                         logger.info(f"[{original} @ {store}] 🧠 GPT raw evaluation reply: {raw_eval}")
+            
+#                         try:
+#                             evj = json.loads(clean_gpt_json_response(raw_eval))
+#                             chosen_idx = evj.get("chosen_id")
+#                             if chosen_idx is None:
+#                                 raise ValueError("chosen_id null")
+#                             chosen_idx = int(chosen_idx)
+#                             if not (0 <= chosen_idx < len(product_candidates)):
+#                                 raise IndexError(f"{chosen_idx} out of range")
+#                             chosen_product = product_candidates[chosen_idx]
+#                         except Exception as e:
+#                             logger.warning(
+#                                 f"[{original} @ {store}] ❌ Eval parse error ({e}); falling back to top result"
+#                             )
+#                             chosen_product = product_candidates[0]
+            
+#                         # 3️⃣ Compute quantity & total cost exactly as before
+#                         product_name = chosen_product["name"]
+#                         price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
+            
+#                         qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
+#                         if qm:
+#                             val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
+#                             factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
+#                             quantity_per_unit = int(val * factor)
+#                         else:
+#                             quantity_per_unit = 500
+            
+#                         if estimated_needed_val is not None:
+#                             units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
+#                             excess = total_quantity - estimated_needed_val
+#                             needed_display = (
+#                                 format_unit_display(quantity_needed_val, quantity_needed_unit)
+#                                 + f" (~{int(estimated_needed_val)}g)"
+#                             )
+#                         else:
+#                             units_needed = 1
+#                             excess = None
+#                             needed_display = quantity_needed_raw or ""
+            
+#                         total_cost = units_needed * price
+#                         total_quantity = units_needed * quantity_per_unit
+            
+#                         key = (store, translated, product_name.lower())
+#                         if key in seen_items:
+#                             logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
+#                             continue
+#                         seen_items.add(key)
+            
+#                         store_carts[store].append({
+#                             "ingredient": original,
+#                             "translated": translated,
+#                             "product_name": product_name,
+#                             "price": f"R$ {price:.2f}",
+#                             "image_url": chosen_product["image_url"],
+#                             "quantity_needed": quantity_needed_raw,
+#                             "quantity_needed_display": needed_display,
+#                             "quantity_unit": "",
+#                             "quantity_per_unit": quantity_per_unit,
+#                             "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
+#                             "units_to_buy": units_needed,
+#                             "total_quantity_added": total_quantity,
+#                             "total_cost": f"R$ {total_cost:.2f}",
+#                             "excess_quantity": excess
+#                         })
+#                         logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
+            
+#                         found = True
+
+
+    
+#             # 5️⃣ After we’ve exhausted all terms for this store…
+#             if not found:
+#                 logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No acceptable product found for any term")
+        
+#         for store, items in store_carts.items():
+#             logger.info(f"[Cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
+
+#         # ▶️ Logging number of items per store
+#         for store, items in store_carts.items():
+#             logger.info(f"[Cart] {store} has {len(items)} items")
+
+#         # ▶️ Fix #1 & #3: assign to local var, cache and return
+#         final_cart_result = {"carts_by_store": store_carts}
+#         cached_cart_result = final_cart_result
+#         logger.info("[rappi-cart] Cart result cached and returned (id=%s)", id(final_cart_result))
+#         return final_cart_result
+
+#     except Exception as e:
+#         logger.error(f"[rappi-cart] Error: {str(e)}")
+#         raise HTTPException(status_code=500, detail=str(e))
+
+# --- Prompts ---
+TRANSLATION_PROMPT = """
+You are a translation assistant for a grocery shopping app.
+Your job is to take each English ingredient name and produce:
+  - A Portuguese translation suitable for Zona Sul.
+  - A "search_base" — the generic noun in Portuguese to use for broader searches.
+  - A list of any qualifiers (adjectives or preparations) to refine searches.
+
+Instructions:
+- Preserve important adjectives (e.g., fresco, integral, vegano).
+- Remove true parentheticals (e.g., "(for greasing the dish)").
+- Extract preparations like "minced", "diced" into qualifiers.
+- If there are no adjectives or prep terms, qualifiers list can be empty.
+
+Output strict JSON array, where each item is:
+{
+  "original": "<exact English input>",
+  "translated": "<full Portuguese phrase>",
+  "search_base": "<noun in Portuguese>",
+  "qualifiers": ["<qual1>", "<qual2>", ...]
+}
+Return only the JSON, no extra text.
+"""
+
+SEARCH_TERM_PROMPT = """
+You are a search-term generator for Zona Sul grocery items.
+Input is a JSON object with:
+  • "search_base": generic noun, e.g. "alho"
+  • "qualifiers": list of qualifiers, e.g. ["fresco", "picado"]
+
+Rules:
+1. First term must be the exact full phrase: search_base + qualifiers in natural order.
+2. Second term must be only the search_base.
+3. Then up to three more combos: search_base + single qualifiers,
+   ordered by likely availability.
+4. No hard-coded overrides.
+
+Return a JSON array of up to 5 strings.
+"""
+
+EVALUATION_PROMPT = """
+You are a product evaluator for a grocery shopping app.
+You receive:
+- candidates: list of objects {id, title, department}
+- search_base: the noun expected, e.g. "creme de leite"
+- qualifiers: list of descriptors, e.g. ["fresco"]
+
+Instructions:
+1. Accept only products whose title contains search_base.
+2. If qualifiers exist, prefer those matching at least one qualifier.
+3. Department must align (e.g. dairy vs personal care).
+4. Reject sponsored or irrelevant items.
+5. If multiple, pick best overlap with search_base + qualifiers.
+6. If none, chosen_id = null.
+
+Output strict JSON: { "chosen_id": <index|null> }
+"""
+
+# --- Helpers ---
+def clean_gpt_json_response(text: str) -> str:
+    # strip code fences and surrounding text
+    text = text.strip()
+    # remove triple backticks
+    if text.startswith("```"):
+        text = text.strip('`')
+    return text
+
+
+def parse_required_quantity(qty_str: str) -> (Optional[float], str):
+    if not qty_str:
+        return None, ""
+    pattern = r"(\d+)(\.?\d*)\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?"
+    match = re.match(pattern, qty_str.lower())
+    if not match:
+        return None, ""
+    val = float(match.group(1) + match.group(2))
+    unit = match.group(3) or "un"
+    factor = {"g":1, "kg":1000, "ml":1, "l":1000, "un":1,
+              "unid":1, "unidade":1, "tbsp":1, "tsp":1, "cup":1, "clove":1}[unit]
+    return val * factor, unit
+
+
+def estimate_mass(name: str, unit: str, value: float) -> float:
+    table = {
+        "un": {"onion":200, "garlic":5, "egg":50},
+        "tbsp": {"butter":14, "olive oil":13},
+        # add more as needed
+    }
+    return value * table.get(unit, {}).get(name.lower(), 1)
+
+# --- Endpoint ---
 @app.post("/rappi-cart")
 def rappi_cart_search(
     ingredients: List[str] = Body(..., embed=True),
-    recipe_title: Optional[str] = Body(None),
     quantities: Optional[List[str]] = Body(None),
     user_id: Optional[str] = Body(None)
 ):
-    global cached_cart_result, cached_last_payload, cached_user_id
-    cached_last_payload = {
-        "ingredients": ingredients,
-        "recipe_title": recipe_title,
-        "quantities": quantities,
-        "user_id": user_id
-    }
-    cached_user_id = user_id
+    # 1️⃣ Translate ingredients
+    payload = {"ingredients": ingredients}
+    translation_resp = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role":"system","content":TRANSLATION_PROMPT},
+            {"role":"user","content":json.dumps(ingredients)}
+        ],
+        max_tokens=300
+    )
+    raw_trans = translation_resp.choices[0].message.content.strip()
+    translations = json.loads(clean_gpt_json_response(raw_trans))
+    logger.info(f"[rappi-cart] Translations: {translations}")
 
-    try:
-        ingredient_override_map = {
-            "tuna": "lombo de atum"
-        }
+    # 2️⃣ Prepare stores
+    store_urls = {"Zona Sul":"https://www.zonasul.com.br"}
+    store_carts = {store: [] for store in store_urls}
+    seen = set()
 
-        if recipe_title and "tartare" in recipe_title.lower():
-            ingredients = [ingredient_override_map.get(ing.lower(), ing) for ing in ingredients]
+    # 3️⃣ Loop each translated ingredient
+    for idx, trans in enumerate(translations):
+        orig = trans["original"]
+        full_pt = trans["translated"]
+        search_base = trans["search_base"]
+        qualifiers = trans.get("qualifiers", [])
 
-        prompt = [
-            {
-                "role": "system",
-                "content": (
-                    "You are a translation assistant for a grocery shopping app.\n"
-                    "Your job is to take each English ingredient name and produce:\n"
-                    "  - A Portuguese translation suitable for Zona Sul.\n"
-                    "  - A 'search_base' — the generic noun in Portuguese to use for broader searches.\n"
-                    "  - A list of any qualifiers (adjectives or preparations) to refine searches.\n\n"
-                    "Instructions:\n"
-                    "- Preserve important adjectives (e.g., fresco, integral, vegano).\n"
-                    "- Remove true parentheticals (e.g., '(for greasing the dish)').\n"
-                    "- Extract preparations like 'minced', 'diced' into qualifiers.\n"
-                    "- If the input has no adjectives or preparation terms, qualifiers list can be empty.\n\n"
-                    "Output strict JSON array. Each item must be:\n"
-                    "{\n"
-                    '  "original": "<exact English input>",\n'
-                    '  "translated": "<full Portuguese phrase>",\n'
-                    '  "search_base": "<noun in Portuguese>",\n'
-                    '  "qualifiers": ["<qualifier1>", "<qualifier2>", ...]\n'
-                    "}\n"
-                    "Do not include any text before or after the JSON."
-                )
-            },
-            {
-                "role": "user",
-                "content": f"Translate and structure the following ingredients: {json.dumps(ingredients)}"
-            }
+        # skip water
+        if orig.lower() in ["water","água"]:
+            continue
+
+        # build search terms
+        search_terms = []
+        # 1. full phrase
+        search_terms.append(full_pt)
+        # then via GPT fallback
+        fallback_prompt = [
+            {"role":"system","content":SEARCH_TERM_PROMPT},
+            {"role":"user","content":json.dumps({"search_base":search_base,"qualifiers":qualifiers}, ensure_ascii=False)}
         ]
-        translation_response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=prompt,
-            max_tokens=300
-        )
+        fb = client.chat.completions.create(
+            model="gpt-4o", messages=fallback_prompt, max_tokens=100
+        ).choices[0].message.content.strip()
+        try:
+            fb_list = json.loads(clean_gpt_json_response(fb))
+            if isinstance(fb_list,list):
+                search_terms.extend(fb_list)
+        except:
+            logger.warning(f"Fallback parse failed for {orig}")
+        # ensure search_base is present
+        if search_base.lower() not in [t.lower() for t in search_terms]:
+            search_terms.append(search_base)
 
-        translated_text = translation_response.choices[0].message.content.strip()
-        translated_list = json.loads(clean_gpt_json_response(translated_text))
+        # parse needed mass
+        qty_raw = quantities[idx] if quantities and idx < len(quantities) else ""
+        required_val, req_unit = parse_required_quantity(qty_raw)
+        est_mass = estimate_mass(orig, req_unit, required_val) if required_val else None
 
-        logger.info(f"[rappi-cart] Translated ingredients: {translated_list}")
-
-        headers = {"User-Agent": "Mozilla/5.0"}
+        # 4️⃣ For each store, try terms
+        for store, url in store_urls.items():
+            found = False
+            # try each search term in turn until we append one product
+            for term in search_terms:
+                if found:
+                    break
         
+                product_candidates = []
         
-        #####HIDDEN FOR NOW (JUST ADD BACK TO DICTIONARY)
-
-        # "Rappi - Zona Sul": "https://www.rappi.com.br/lojas/900498307-zona-sul-rio-de-janeiro/s",
-        # "Rappi - Pão de Açúcar": "https://www.rappi.com.br/lojas/900014202-pao-de-acucar-rio-de-janeiro/s",
+                if "zonasul.com.br" in url:
+                    # Zona Sul HTML scraping branch
+                    search_url = f"{url}/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
+                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
+                    response = requests.get(search_url, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.text, "html.parser")
+                    product_blocks = soup.select("article.vtex-product-summary-2-x-element")
+                    logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
         
+                    for product in product_blocks[:5]:
+                        # extract name, price, image, etc.
+                        name_elem = product.select_one("span.vtex-product-summary-2-x-productBrand")
+                        price_int = product.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
+                        if not name_elem or not price_int:
+                            continue
+                        full_name = name_elem.get_text(strip=True)
+                        price_frac = product.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
+                        full_price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
+                        product_candidates.append({
+                            "name": full_name,
+                            "price": f"R$ {full_price:.2f}",
+                            "description": full_name.lower(),
+                            "image_url": product.select_one("img.vtex-product-summary-2-x-imageNormal").get("src"),
+                            "raw_block": product
+                        })
         
-        store_urls = {
-            "Zona Sul": "https://www.zonasul.com.br"  # ← just the base, term will be appended later
-        }
-
-        store_carts = {store: [] for store in store_urls.keys()}
-
-        def parse_required_quantity(qty_str):
-            if not qty_str:
-                return None, ""
-            match = re.match(r"(\d+)(\.?\d*)\\s*(g|kg|ml|l|un|unid|unidade|tbsp|tsp|cup|clove)?", qty_str.lower())
-            if match:
-                value = float(match.group(1) + match.group(2))
-                unit = match.group(3) or "un"
-                factor = {"g": 1, "kg": 1000, "ml": 1, "l": 1000, "un": 1, "unid": 1, "unidade": 1, "tbsp": 1, "tsp": 1, "cup": 1, "clove": 1}.get(unit, 1)
-                std_val = value * factor
-                return std_val, unit
-            return None, ""
-
-        def extract_next_data_json(soup):
-            script = soup.find("script", {"id": "__NEXT_DATA__", "type": "application/json"})
-            if not script:
-                logger.warning("[rappi-cart] Could not find __NEXT_DATA__ script tag")
-                return None
-            try:
-                return json.loads(script.string)
-            except Exception as e:
-                logger.warning(f"[rappi-cart] Failed to parse NEXT_DATA: {e}")
-                return None
-
-        def iterate_fallback_products(fallback):
-            for key, val in fallback.items():
-                if isinstance(val, dict) and "products" in val:
-                    yield from val["products"]
-
-        def estimate_mass(ingredient_name, unit, value):
-            key = ingredient_name.lower()
-            table = {
-                "un": {"onion": 200, "garlic": 5, "egg": 50, "lime": 65, "shallot": 50, "nori": 5},
-                "tbsp": {"butter": 14, "olive oil": 13, "avocado oil": 13, "sugar": 12, "flour": 8},
-                "tsp": {"salt": 6, "pepper": 2, "sugar": 4, "mirin": 5, "soy sauce": 5, "rice wine vinegar": 5},
-                "clove": {"garlic": 5},
-                "cup": {"milk": 240, "heavy cream": 240, "water": 240, "cherry tomatoes": 150}
-            }.get(unit, {})
-            return value * table.get(key, 1)
-        
-        seen_items = set()
-
-        for idx, (original, translated) in enumerate(zip(ingredients, translated_list)):
-            if original.lower() in ["water", "água"]:
-                continue
-
-            base_term = translated.split()[0]
-            search_terms = [translated]
-            # 🔍 Log the full search terms being used for this ingredient
-            logger.info(f"[rappi-cart][{original}] Search base: {search_base}, Qualifiers: {qualifiers}")
-
-            search_base = translated["search_base"]
-            qualifiers = translated.get("qualifiers", [])
-            
-            fallback_prompt = [
-                {
-                    "role": "system",
-                    "content": (
-                        "System: You are a search‐term generator for Zona Sul grocery items.\n"
-                        "Input is a JSON object with:\n"
-                        "  • \"search_base\" (generic noun, e.g. \"alho\")\n"
-                        "  • \"qualifiers\" (list, e.g. [\"fresco\", \"picado\"])\n\n"
-                        "Rules:\n"
-                        "  1. First term must be the **exact** full Portuguese phrase:\n"
-                        "     search_base + all qualifiers joined in natural order.\n"
-                        "  2. Second term should be **only** the search_base noun.\n"
-                        "  3. Then generate up to three more combinations of search_base + single qualifiers,\n"
-                        "     ordered by likely availability (e.g., “creme de leite fresco”, “creme de leite integral”).\n"
-                        "  4. No hard‐coded overrides—entirely driven by input fields.\n\n"
-                        "Return a JSON array of up to 5 strings."
-                    )
-                },
-                {
-                    "role": "user",
-                    "content": json.dumps({
-                        "search_base": search_base,
-                        "qualifiers": qualifiers
-                    }, ensure_ascii=False)
-                }
-            ]
-
-            fallback_response = client.chat.completions.create(
-                model="gpt-4o",
-                messages=fallback_prompt,
-                max_tokens=100
-            )
-            fallback_text = fallback_response.choices[0].message.content.strip()
-            logger.info(f"[rappi-cart] Fallback GPT response: {fallback_text}")
-            
-            try:
-                fallback_list = json.loads(clean_gpt_json_response(fallback_text))
-                if not isinstance(fallback_list, list):
-                    raise ValueError("Fallback is not a JSON list.")
-            except Exception as e:
-                logger.error(f"[rappi-cart] Error parsing fallback JSON: {str(e)}")
-                fallback_list = []
-            
-            search_terms.extend(fallback_list)
-            
-            # Corrected name: use search_base not base_term
-            if search_base.lower() not in [term.lower() for term in search_terms]:
-                search_terms.append(search_base)
-
-
-            quantity_needed_raw = quantities[idx] if quantities and idx < len(quantities) else ""
-            quantity_needed_val, quantity_needed_unit = parse_required_quantity(quantity_needed_raw)
-            estimated_needed_val = estimate_mass(original, quantity_needed_unit, quantity_needed_val) if quantity_needed_val else None
-
-
-            #### NEW VERSION OF LOOP
-            for store, url in store_urls.items():
-                found = False
-        
-                # try each search term in turn until we append one product
-                for term in search_terms:
-                    if found:
-                        break
-        
-                    # 1️⃣ Build the list of raw product dicts:
-                    product_candidates = []
-
-                    ### USE ZONA SUL ONLY FOR NOW
-                    if "zonasul.com.br" in url:
-                        search_url = f"https://www.zonasul.com.br/{term.replace(' ', '%20')}?_q={term.replace(' ', '%20')}&map=ft"
-                        logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] ➤ Full URL: {search_url}")
-                        response = requests.get(search_url, headers=headers, timeout=10)
-                        soup = BeautifulSoup(response.text, "html.parser")
-                        found = False
-                
-                        product_blocks = soup.select("article.vtex-product-summary-2-x-element")
-                        logger.info(f"[rappi-cart][{original} @ Zona Sul Direct] 🧱 Found {len(product_blocks)} product blocks")
-                
-                        product_candidates = []
-                        
-                        for product in product_blocks[:5]:
-                            name_elem = product.select_one("span.vtex-product-summary-2-x-productBrand")
-                            image_elem = product.select_one("img.vtex-product-summary-2-x-imageNormal")
-                            price_int = product.select_one("span.zonasul-zonasul-store-1-x-currencyInteger")
-                            price_frac = product.select_one("span.zonasul-zonasul-store-1-x-currencyFraction")
-                        
-                            if not name_elem or not price_int:
-                                continue
-                        
-                            full_name = name_elem.get_text(strip=True)
-                            full_price = float(f"{price_int.text.strip()}.{price_frac.text.strip() if price_frac else '00'}")
-                            description = full_name.lower()
-                        
-                            product_candidates.append({
-                                "name": full_name,
-                                "price": f"R$ {full_price:.2f}",
-                                "description": description,
-                                "image_url": image_elem.get("src") if image_elem else None,
-                                "raw_block": product  # Keep the full block for later reuse
-                            })
-                        
-                        if not product_candidates:
-                            logger.warning(f"[rappi-cart][{original} @ Zona Sul Direct] ❌ No viable products to evaluate with GPT.")
-
-
-
-                    ##### COMMENTING ON RAPPI SEARCH TO OPTIMIZE TESTING. WILL REVERT BACK LATER
-                    # else:
-                    #     # — your existing Rappi JSON logic (Pão de Açúcar) —
-                    #     response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
-                    #     json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
-                    #     if not json_data:
-                    #         continue
-                    #     fallback = json_data["props"]["pageProps"]["fallback"]
-                    #     for p in iterate_fallback_products(fallback):
-                    #         name = p["name"].strip()
-                    #         price = float(str(p["price"]).replace(",", "."))
-                    #         description = name.lower()
-                    #         image_raw = p.get("image", "")
-                    #         image_url = (
-                    #             image_raw
-                    #             if image_raw.startswith("http")
-                    #             else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130"
-                    #             if image_raw else None
-                    #         )
-                    #         product_candidates.append({
-                    #             "name": name,
-                    #             "price": f"R$ {price:.2f}",
-                    #             "description": description,
-                    #             "image_url": image_url,
-                    #             "raw_block": p
-                    #         })
-                    #     # (log & continue if product_candidates is empty)
-        
-                    if not product_candidates:
-                        logger.warning(f"[rappi-cart][{original} @ {store}] ❌ no candidates for term '{term}'")
+                else:
+                    # — your existing Rappi JSON logic (Pão de Açúcar) —
+                    response = requests.get(url, params={"term": term}, headers=headers, timeout=10)
+                    json_data = extract_next_data_json(BeautifulSoup(response.text, "html.parser"))
+                    if not json_data:
                         continue
-        
-                    # 2️⃣ Ask GPT to pick exactly one of them:
-                    EVALUATION_PROMPT = [
-                        {"role": "system", "content": (
-                            "You are a product evaluator for a grocery shopping app.\n"
-                            "You receive:\n"
-                            "- candidates: a list of product objects, each with:\n"
-                            "  - \"id\": string\n"
-                            "  - \"title\": string\n"
-                            "  - \"department\": string (example: \"Frios & Laticínios\")\n"
-                            "- search_base: the generic noun expected (example: \"creme de leite\")\n"
-                            "- qualifiers: list of descriptors (example: [\"fresco\"])\n\n"
-                            "Instructions:\n"
-                            "1. Accept only products whose title contains search_base.\n"
-                            "2. If qualifiers exist, prefer products whose title contains at least one.\n"
-                            "3. Department must make sense (e.g., \"creme de leite\" should be in dairy, not personal care).\n"
-                            "4. Reject any sponsored, irrelevant, or obviously wrong products (e.g., toothpaste, detergent).\n"
-                            "5. If multiple good matches, pick the best overlap with search_base + qualifiers.\n"
-                            "6. If nothing fits well, return null.\n\n"
-                            "Output strict JSON:\n"
-                            "{ \"chosen_id\": \"<best id>\" }\n"
-                            "or\n"
-                            "{ \"chosen_id\": null }"
-                        )},
-                    ]
-
-                    # 2️⃣ Ask GPT to evaluate JSON-style:
-                    eval_messages = [
-                        {"role": "system", "content": EVALUATION_PROMPT},
-                        {"role": "user", "content": json.dumps({
-                            "candidates": [
-                                {"id": idx, "title": c["name"], "department": c.get("department", "")}
-                                for idx, c in enumerate(product_candidates)
-                            ],
-                            "search_base": search_base,       # from your translation step
-                            "qualifiers": qualifiers          # from your translation step
-                        })}
-                    ]
-                    eval_resp = client.chat.completions.create(
-                        model="gpt-4o",
-                        messages=eval_messages,
-                        temperature=0,
-                        max_tokens=150
-                    )
-                    eval_text = eval_resp.choices[0].message.content.strip()
-                    logger.info(f"[{original} @ {store}] 🧠 GPT raw evaluation reply: {eval_text}")
-
-                    try:
-                        eval_json = json.loads(clean_gpt_json_response(eval_text))
-                        chosen_idx = eval_json.get("chosen_id")
-                        if chosen_idx is None:
-                            raise ValueError("chosen_id is null")
-                        chosen_idx = int(chosen_idx)
-                        if not 0 <= chosen_idx < len(product_candidates):
-                            raise IndexError(f"chosen_id {chosen_idx} out of range")
-                        chosen_product = product_candidates[chosen_idx]
-                    except Exception as e:
-                        logger.warning(
-                            f"[{original} @ {store}] ❌ Evaluation JSON parse error ({e}); falling back to top result"
+                    fallback = json_data["props"]["pageProps"]["fallback"]
+                    for p in iterate_fallback_products(fallback):
+                        name = p["name"].strip()
+                        price = float(str(p["price"]).replace(",", "."))
+                        description = name.lower()
+                        image_raw = p.get("image", "")
+                        image_url = (
+                            image_raw
+                            if image_raw.startswith("http")
+                            else f"https://images.rappi.com.br/products/{image_raw}?e=webp&q=80&d=130x130" if image_raw else None
                         )
-                        chosen_product = product_candidates[0]
-
-                    # 4️⃣ Now compute quantity & cost exactly as before:
-                    product_name = chosen_product["name"]
-                    price = float(chosen_product["price"].replace("R$", "").replace(",", "."))
-
-                    # extract quantity_per_unit via regex on product_name or raw_block…
-                    qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", product_name.lower())
-                    if qm:
-                        val, unit = float(qm.group(1).replace(",", ".")), qm.group(2)
-                        factor = {"kg": 1000, "g": 1, "unidade": 1}.get(unit, 1)
-                        quantity_per_unit = int(val * factor)
-                    else:
-                        quantity_per_unit = 500
-
-                    # --- EXPLICIT None check here ---
-                    if estimated_needed_val is not None:
-                        units_needed = max(1, int(estimated_needed_val // quantity_per_unit + 0.999))
-                        excess = total_quantity - estimated_needed_val  # use below
-                        # build display with the "~g" suffix
-                        needed_display = (
-                            format_unit_display(quantity_needed_val, quantity_needed_unit)
-                            + f" (~{int(estimated_needed_val)}g)"
-                        )
-                    else:
-                        units_needed = 1
-                        excess = None
-                        needed_display = quantity_needed_raw or ""
-
-                    total_cost = units_needed * price
-                    total_quantity = units_needed * quantity_per_unit
-
-                    key = (store, translated, product_name.lower())
-                    if key in seen_items:
-                        logger.info(f"[rappi-cart][{original} @ {store}] 🔁 Already seen: {product_name}")
-                        continue
-                    seen_items.add(key)
-
-                    store_carts[store].append({
-                        "ingredient": original,
-                        "translated": translated,
-                        "product_name": product_name,
-                        "price": f"R$ {price:.2f}",
-                        "image_url": chosen_product["image_url"],
-                        "quantity_needed": quantity_needed_raw,
-                        "quantity_needed_display": needed_display,
-                        "quantity_unit": "",
-                        "quantity_per_unit": quantity_per_unit,
-                        "display_quantity_per_unit": format_unit_display(quantity_per_unit, "g"),
-                        "units_to_buy": units_needed,
-                        "total_quantity_added": total_quantity,
-                        "total_cost": f"R$ {total_cost:.2f}",
-                        "excess_quantity": excess
-                    })
-                    logger.info(f"[rappi-cart][{original} @ {store}] ✅ Added: {product_name}")
-
-                    found = True
-
-    
-            # 5️⃣ After we’ve exhausted all terms for this store…
-            if not found:
-                logger.warning(f"[rappi-cart][{original} @ {store}] ⚠️ No acceptable product found for any term")
+                        product_candidates.append({
+                            "name": name,
+                            "price": f"R$ {price:.2f}",
+                            "description": description,
+                            "image_url": image_url,
+                            "raw_block": p
+                        })
         
-        for store, items in store_carts.items():
-            logger.info(f"[Cart] Final cart for {store}: {json.dumps(items, indent=2, ensure_ascii=False)}")
+                if not product_candidates:
+                    logger.warning(f"[rappi-cart][{original} @ {store}] ❌ no candidates for term '{term}'")
+                    continue
 
-        # ▶️ Logging number of items per store
-        for store, items in store_carts.items():
-            logger.info(f"[Cart] {store} has {len(items)} items")
+                # ask GPT to eval
+                eval_msgs = [
+                    {"role":"system","content":EVALUATION_PROMPT},
+                    {"role":"user","content":json.dumps({
+                        "candidates":[{"id":i,"title":c['name'],"department":c['department']} for i,c in enumerate(candidates)],
+                        "search_base":search_base,
+                        "qualifiers":qualifiers
+                    })}
+                ]
+                eval_resp = client.chat.completions.create(
+                    model="gpt-4o",messages=eval_msgs,temperature=0,max_tokens=100
+                )
+                raw_eval = eval_resp.choices[0].message.content.strip()
+                try:
+                    ev = json.loads(clean_gpt_json_response(raw_eval))
+                    cid = ev.get("chosen_id")
+                    if cid is None or not (0 <= int(cid) < len(candidates)):
+                        chosen = candidates[0]
+                    else:
+                        chosen = candidates[int(cid)]
+                except:
+                    chosen = candidates[0]
 
-        # ▶️ Fix #1 & #3: assign to local var, cache and return
-        final_cart_result = {"carts_by_store": store_carts}
-        cached_cart_result = final_cart_result
-        logger.info("[rappi-cart] Cart result cached and returned (id=%s)", id(final_cart_result))
-        return final_cart_result
+                # compute units
+                qm = re.search(r"(\d+(?:[.,]\d+)?)(kg|g|unidade|un)", chosen['name'].lower())
+                if qm:
+                    v,u = float(qm.group(1).replace(',','.')),qm.group(2)
+                    qp = int(v * ({'kg':1000,'g':1,'unidade':1,'un':1}[u]))
+                else:
+                    qp = 500
+                if est_mass:
+                    units = max(1,int(est_mass//qp + 0.999))
+                    total_qty = units * qp
+                    excess = total_qty - est_mass
+                else:
+                    units, excess = 1, None
+                total_cost = units * float(chosen['price'].replace('R$','').replace(',','.'))
 
-    except Exception as e:
-        logger.error(f"[rappi-cart] Error: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+                key = (store, orig, chosen['name'])
+                if key in seen: break
+                seen.add(key)
+
+                store_carts[store].append({
+                    "ingredient":orig,
+                    "translated":full_pt,
+                    "product_name":chosen['name'],
+                    "price":chosen['price'],
+                    "image_url":chosen['image_url'],
+                    "quantity_needed":qty_raw,
+                    "quantity_needed_display":f"{units} x {qp}g",
+                    "quantity_per_unit":qp,
+                    "units_to_buy":units,
+                    "total_quantity_added":units*qp,
+                    "total_cost":f"R$ {total_cost:.2f}",
+                    "excess_quantity":excess
+                })
+
+                logger.info(f"[rappi-cart][{orig} @ {store}] ✅ Added: {chosen['name']}")
+                added = True
+                break
+            if not added:
+                logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ No match found")
+
+    # 5️⃣ Return combined carts
+    return {"carts_by_store": store_carts}
 
         
 @app.get("/rappi-cart/view")
