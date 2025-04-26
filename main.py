@@ -267,7 +267,9 @@ def get_recent_recipes(
             "id": record["id"],
             "title": parsed.get("title", fields.get("Title", "")),
             "cook_time_minutes": parsed.get("cookTimeMinutes"),
-            "ingredients": parsed.get("ingredients")
+            "ingredients": parsed.get("ingredients"),
+            "instructions": parsed.get("steps")
+            
         })
 
     logging.info(f"[recent-recipes] returning {len(output)} records for user {user_id}")
@@ -368,7 +370,8 @@ def get_saved_recipes(user_id: str):
             "id": rec["id"],
             "title": parsed.get("title", f.get("Title")),
             "cook_time_minutes": parsed.get("cookTimeMinutes"),
-            "ingredients": parsed.get("ingredients")
+            "ingredients": parsed.get("ingredients"),
+            "instructions": parsed.get("steps")
         })
     return output
 
