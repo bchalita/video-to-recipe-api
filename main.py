@@ -937,21 +937,15 @@ Return a JSON array of up to 5 strings.
 """
 
 EVALUATION_PROMPT = """
-You are a product evaluator for a grocery shopping app.
-You receive:
-- candidates: list of objects {id, title, department}
-- search_base: the noun expected, e.g. "creme de leite"
-- qualifiers: list of descriptors, e.g. ["fresco"]
+You are a grocery‐shopping assistant.
+Input is a JSON object with:
+  • candidates: a list of {id, title}
+  • search_base: the noun we want (e.g. "leite")
+  • qualifiers: optional descriptors (e.g. ["fresco"])
 
-Instructions:
-1. Accept only products whose title contains search_base.
-2. If qualifiers exist, prefer those matching at least one qualifier.
-3. Department must align (e.g. dairy vs personal care).
-4. Reject sponsored or irrelevant items.
-5. If multiple, pick best overlap with search_base + qualifiers.
-6. If none, chosen_id = null.
-
-Output strict JSON: { "chosen_id": <index|null> }
+Your job is to pick which candidate best matches search_base and any qualifiers.
+Return exactly the zero‐based index of your choice, or –1 if none match.
+Output only that integer, with no extra text.
 """
 
 # --- Helpers ---
@@ -1091,9 +1085,31 @@ def rappi_cart_search(
                     cards = soup.select("article.vtex-product-summary-2-x-element")
                     logger.info(f"[rappi-cart][{orig} @ {store}] 🧱 Found {len(cards)} product cards")
                 
+                    # if VTEX cards didn’t render, fall back to the embedded JSON
                     if not cards:
-                        logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ No cards at all – page may be JS-rendered")
-                        # let fallback or next term handle it
+                        data = extract_next_data_json(soup)
+                        prods = (
+                            data
+                            .get("props", {})
+                            .get("pageProps", {})
+                            .get("initialData", {})
+                            .get("products", [])
+                        )
+                        logger.info(f"[{orig} @ {store}] ▶️ Fallback JSON products: {len(prods)}")
+                        for p in prods[:5]:
+                            name = p.get("productName", "").strip()
+                            price = float(p.get("price", {}).get("value", 0))
+                            img = p.get("imageUrl", "")
+                            product_candidates.append({
+                                "name": name,
+                                "price": f"R$ {price:.2f}",
+                                "description": name.lower(),
+                                "image_url": img,
+                                "raw": p
+                            })
+                        if not product_candidates:
+                            logger.warning(f"[{orig} @ {store}] ❌ No fallback JSON products either")
+                            continue
                     for idx, card in enumerate(cards[:5]):
                         # 3️⃣ Extract name
                         name_el = (
