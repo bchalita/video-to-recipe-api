@@ -1146,6 +1146,10 @@ def rappi_cart_search(
                     if not product_candidates:
                         logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ no candidates after scraping")
                         continue
+
+
+
+                    
                     # — FILTER BY search_base + qualifiers —
                     filtered = []
                     sb = search_base.lower()
@@ -1188,6 +1192,21 @@ def rappi_cart_search(
                 if not product_candidates:
                     logger.warning(f"[rappi-cart][{orig} @ {store}] ❌ no candidates for term '{term}'")
                     continue
+
+
+                phase1 = [
+                    c for c in product_candidates
+                    if search_base.lower() in c["name"].lower()
+                ]
+                #   * only on the exact full-phrase pass do we enforce qualifiers
+                if term == full_pt and qualifiers:
+                    phase2 = [
+                        c for c in phase1
+                        if any(q.lower() in c["name"].lower() for q in qualifiers)
+                    ]
+                    product_candidates = phase2 or phase1
+                else:
+                    product_candidates = phase1
         
                 # 2️⃣ Use the same evaluator for either source:
                 eval_messages = [
