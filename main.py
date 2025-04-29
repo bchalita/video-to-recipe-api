@@ -81,10 +81,11 @@ app.add_middleware(
 client = OpenAI()
 
 class RecipeIn(BaseModel):
+    id: str
     title: str
     ingredients: list[str]
     steps: list[str]
-    cook_time: str | None = None
+    cook_time_minutes: int
     video_url: str | None = None
 
 class RecipeOut(RecipeIn):
@@ -93,7 +94,7 @@ class RecipeOut(RecipeIn):
 class Recipe(BaseModel):
      id: str
      title: str
-     ingredients: List[Ingredient]
+     ingredients: list[str]
      steps: List[str]
      cook_time_minutes: int
      user_id: Optional[str] = None
@@ -128,8 +129,6 @@ ingredient_db_path = "ingredients.db"
 class Ingredient(BaseModel):
     name: str
     quantity: Optional[str] = None
-
-
 
 class UserInteraction(BaseModel):
     user_id: str
