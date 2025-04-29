@@ -88,8 +88,14 @@ class RecipeIn(BaseModel):
     cook_time_minutes: int
     video_url: str | None = None
 
-class RecipeOut(RecipeIn):
+class RecipeOut(BaseModel):
     id: str
+    title: str
+    ingredients: List[str]
+    steps: List[str]
+    cook_time_minutes: Optional[int]
+    video_url: Optional[str]
+    summary: Optional[str]
 
 class Recipe(BaseModel):
      id: str
@@ -1552,19 +1558,27 @@ async def upload_video(
         if resp_main.status_code not in (200, 201):
             raise HTTPException(status_code=500, detail="Failed to save recipe to Recipes table")
         # Save to RecipesFeed table
+        # parse out the new record’s ID
+        main_record = resp_main.json().get("records", [])[0]
+        new_id = main_record.get("id")
+        
+        # then write to the feed table as before
         resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
         if resp_feed.status_code not in (200, 201):
-            raise HTTPException(status_code=500, detail="Failed to save recipe to RecipesFeed table")
+            raise HTTPException(...)
 
         # Return without summary; frontend can fetch summary in GET
-        return RecipeOut(
-            title=recipe_title,
-            ingredients=ingredients,
-            steps=steps,
-            cook_time_minutes=cook_time_minutes,
-            video_url=video_url_field,
-            summary=None
-        )
+    # … after resp_feed check …
+        return {
+            "id": new_id,
+            "title": recipe_title,
+            "ingredients": ingredients,
+            "steps": steps,
+            "cook_time_minutes": cook_time_minutes,
+            "video_url": video_url_field,
+            "debug": {"frames_processed": len(frames)}
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
         
