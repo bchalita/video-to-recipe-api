@@ -263,6 +263,25 @@ async def upload_recipe(recipe: RecipeIn):
 
     # Return the record from main table with its id
     return RecipeOut(id=new_id, **recipe.dict())
+    
+
+@app.get("/recipes/{recipe_id}", response_model=RecipeOut)
+async def get_recipe(recipe_id: str):
+    url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}/{recipe_id}"
+    headers = {"Authorization": f"Bearer {AIRTABLE_API_KEY}"}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise HTTPException(status_code=404, detail="Recipe not found")
+    fields = resp.json().get("fields", {})
+    return RecipeOut(
+        id=recipe_id,
+        title=fields.get("Title"),
+        ingredients=json.loads(fields.get("Ingredients", "[]")),
+        steps=json.loads(fields.get("Steps", "[]")),
+        cook_time_minutes=fields.get("Cook Time Minutes"),
+        video_url=fields.get("Video_URL"),
+        summary=fields.get("Recipe Summary")
+    )
 
 @app.get("/recipes-feed", response_model=List[RecipeOut])
 async def get_recipes_feed():
@@ -1493,10 +1512,13 @@ async def upload_video(
             if description:
                 parts.append(f"Here is the video description:\n{description}\n")
             parts.append(
-                "You are an expert recipe extractor. "
-                "Based on the images, output valid JSON with keys: "
-                "title, ingredients (list of {name,quantity}), steps (list), cook_time_minutes (int)."
+                "Você é um especialista em extrair receitas. "
+                "Com base nas imagens, retorne JSON com chaves: "
+                "titulo, ingredientes (lista de {nome,quantidade}), passos (lista), "
+                "tempo_preparo_minutos (inteiro). "
+                "Todo o texto deve estar em português."
             )
+
             system_msg = {"role": "system", "content": "\n\n".join(parts)}
 
             user_list = [{"type": "text", "text": "Extract recipe JSON from these frames:"}]
