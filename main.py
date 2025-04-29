@@ -1442,10 +1442,6 @@ async def upload_video(
 
             return [system_msg, {"role": "user", "content": user_list}]
 
-
-
-                import time
-
         def safe_create(messages):
             for attempt in range(3):
                 try:
