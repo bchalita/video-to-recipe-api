@@ -1411,7 +1411,12 @@ async def upload_video(
             raise HTTPException(status_code=500, detail="No frames extracted")
 
         guess_id = classify_image_multiple(frames) if frames else None
-        selected = frames[:90]
+
+        # ─── SAMPLE & LIMIT FRAMES TO AVOID TOKEN OVERFLOW ──────────────────────────
+        # only send at most 20 images to GPT
+        max_frames = 20
+        step = max(1, len(frames) // max_frames)
+        selected = frames[::step][:max_frames]
         mid = len(selected) // 2
 
         def gpt_prompt(frames_subset: List[str]):
@@ -1437,16 +1442,28 @@ async def upload_video(
 
             return [system_msg, {"role": "user", "content": user_list}]
 
-        first_pass = client.chat.completions.create(
-            model="gpt-4o",
-            messages=gpt_prompt(selected[:mid]),
-            max_tokens=1000
-        )
-        second_pass = client.chat.completions.create(
-            model="gpt-4o",
-            messages=gpt_prompt(selected[mid:]),
-            max_tokens=1000
-        )
+
+
+                import time
+
+        def safe_create(messages):
+            for attempt in range(3):
+                try:
+                    return client.chat.completions.create(
+                        model="gpt-4o", messages=messages, max_tokens=1000
+                    )
+                except Exception as e:
+                    if "429" in str(e):
+                        time.sleep(2 ** attempt)
+                        continue
+                    raise
+            # last-ditch
+            return client.chat.completions.create(
+                model="gpt-4o", messages=messages, max_tokens=1000
+            )
+
+        first_pass = safe_create(gpt_prompt(selected[:mid]))
+        second_pass = safe_create(gpt_prompt(selected[mid:]))
 
         combined = first_pass.choices[0].message.content.strip() + "\n" + second_pass.choices[0].message.content.strip()
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined, re.DOTALL)
