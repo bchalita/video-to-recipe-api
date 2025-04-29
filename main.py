@@ -257,19 +257,25 @@ async def upload_recipe(recipe: RecipeIn):
     # Return the record from main table with its id
     return RecipeOut(id=new_id, **recipe.dict())
 
-@app.get("/recipes-feed", response_model=list[RecipeOut])
+@app.get("/recipes-feed", response_model=List[RecipeOut])
 async def get_recipes_feed():
     params = {}
-    records: list[RecipeOut] = []
-
+    records: List[RecipeOut] = []
     while True:
         resp = requests.get(FEED_ENDPOINT, headers=HEADERS, params=params)
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail="Error fetching RecipesFeed data")
         data = resp.json()
         for rec in data.get("records", []):
-            fields = rec.get("fields", {})
-            records.append(RecipeOut(id=rec.get("id"), **fields))
+            f = rec.get("fields", {})
+            records.append(RecipeOut(
+                title=f.get("Title"),
+                ingredients=json.loads(f.get("Ingredients", "[]")),
+                steps=json.loads(f.get("Steps", "[]")),
+                cook_time_minutes=f.get("Cook Time Minutes"),
+                video_url=f.get("Video_URL"),
+                summary=f.get("Recipe Summary")
+            ))
         offset = data.get("offset")
         if not offset:
             break
@@ -1433,6 +1439,7 @@ async def upload_video(
 ):
     temp_dir = None
     frames = []
+    description = ""
     try:
         # Download or save video
         if tiktok_url:
@@ -1527,7 +1534,7 @@ async def upload_video(
         cook_time_minutes = parsed.get("cook_time_minutes")
         video_url_field   = tiktok_url or None
 
-        fields = {
+                fields = {
             "Title": recipe_title,
             "Ingredients": json.dumps(ingredients),
             "Steps": json.dumps(steps),
@@ -1540,29 +1547,27 @@ async def upload_video(
 
         payload = {"records": [{"fields": fields}]}
 
-        # 1) Save to main Recipes table
+        # Save to Recipes table
         resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
         if resp_main.status_code not in (200, 201):
             raise HTTPException(status_code=500, detail="Failed to save recipe to Recipes table")
-
-        # 2) ALSO SAVE to RecipesFeed table
+        # Save to RecipesFeed table
         resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
         if resp_feed.status_code not in (200, 201):
-            # optionally rollback main entry here
             raise HTTPException(status_code=500, detail="Failed to save recipe to RecipesFeed table")
 
-        return {
-            "title": recipe_title,
-            "ingredients": ingredients,
-            "steps": steps,
-            "cook_time_minutes": cook_time_minutes,
-            "video_url": video_url_field
-        }
-        
+        # Return without summary; frontend can fetch summary in GET
+        return RecipeOut(
+            title=recipe_title,
+            ingredients=ingredients,
+            steps=steps,
+            cook_time_minutes=cook_time_minutes,
+            video_url=video_url_field,
+            summary=None
+        )
     except Exception as e:
-        logger.error(f"[upload-video] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
+        
     finally:
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
