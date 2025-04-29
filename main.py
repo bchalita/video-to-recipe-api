@@ -1563,6 +1563,23 @@ async def upload_video(
         cook_time_minutes = parsed.get("cook_time_minutes")
         video_url_field   = tiktok_url or None
 
+
+        summary_prompt = [
+            {"role": "system", "content": "Você é um assistente que cria resumos de receitas em português do Brasil."},
+            {"role": "user", "content":
+                f"Crie um resumo caloroso em 2–3 frases para esta receita:\n"
+                f"Título: {recipe_title}\n"
+                f"Ingredientes: {', '.join(i['name'] for i in ingredients)}\n"
+                f"Passos: {'; '.join(steps)}"
+            }
+        ]
+        summary_resp = client.chat.completions.create(
+            model="gpt-4o",
+            messages=summary_prompt,
+            max_tokens=100
+        )
+        recipe_summary = summary_resp.choices[0].message.content.strip()
+        
         fields = {
             "Title": recipe_title,
             "Ingredients": json.dumps(ingredients),
@@ -1570,6 +1587,7 @@ async def upload_video(
             "Cook Time Minutes": cook_time_minutes,
             "Video_URL": video_url_field,
             "Recipe JSON": json.dumps(parsed)
+            "Recipe Summary": recipe_summary 
         }
         if user_id:
             fields["User ID"] = [user_id]
