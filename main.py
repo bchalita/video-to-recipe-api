@@ -36,6 +36,7 @@ import uuid
 from uuid import uuid4
 from schemas import UserLogin  # make sure you have UserLogin in schemas.py
 import logging
+import traceback, sys
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -1580,7 +1581,10 @@ async def upload_video(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback, sys
+        tb = traceback.format_exc()
+        print(f"[upload-video] FULL TRACEBACK:\n{tb}", file=sys.stderr)
+        raise HTTPException(status_code=500, detail=f"Internal error: {e}")
         
     finally:
         if temp_dir and os.path.exists(temp_dir):
