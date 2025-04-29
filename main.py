@@ -90,6 +90,14 @@ class RecipeIn(BaseModel):
 class RecipeOut(RecipeIn):
     id: str
 
+class Recipe(BaseModel):
+     id: str
+     title: str
+     ingredients: List[Ingredient]
+     steps: List[str]
+     cook_time_minutes: int
+     user_id: Optional[str] = None
+
 class UserDB(Base):
     __tablename__ = "users"
     id = Column(String, primary_key=True, index=True)
