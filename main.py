@@ -1586,7 +1586,7 @@ async def upload_video(
             "Steps": json.dumps(steps),
             "Cook Time Minutes": cook_time_minutes,
             "Video_URL": video_url_field,
-            "Recipe JSON": json.dumps(parsed)
+            "Recipe JSON": json.dumps(parsed),
             "Recipe Summary": recipe_summary 
         }
         if user_id:
