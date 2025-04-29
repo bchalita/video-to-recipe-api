@@ -56,6 +56,17 @@ AIRTABLE_RECIPES_TABLE = "Recipes"
 AIRTABLE_USERS_TABLE = "Users"
 AIRTABLE_INTERACTIONS_TABLE = "UserInteractions"
 AIRTABLE_SAVED_RECIPES_TABLE = "SavedRecipes"
+AIRTABLE_RECIPES_FEED_TABLE = "RecipesFeed"
+
+RECIPES_ENDPOINT = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
+FEED_ENDPOINT = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_FEED_TABLE}"
+
+# Common headers for Airtable
+HEADERS = {
+    "Authorization": f"Bearer {AIRTABLE_API_KEY}",
+    "Content-Type": "application/json"
+}
+
 
 app = FastAPI()
 
@@ -68,6 +79,16 @@ app.add_middleware(
 )
 
 client = OpenAI()
+
+class RecipeIn(BaseModel):
+    title: str
+    ingredients: list[str]
+    steps: list[str]
+    cook_time: str | None = None
+    video_url: str | None = None
+
+class RecipeOut(RecipeIn):
+    id: str
 
 class UserDB(Base):
     __tablename__ = "users"
@@ -100,13 +121,7 @@ class Ingredient(BaseModel):
     name: str
     quantity: Optional[str] = None
 
-class Recipe(BaseModel):
-    id: str
-    title: str
-    ingredients: List[Ingredient]
-    steps: List[str]
-    cook_time_minutes: int
-    user_id: Optional[str] = None
+
 
 class UserInteraction(BaseModel):
     user_id: str
@@ -212,6 +227,47 @@ def signup(user: UserSignup):
 
     logger.info(f"[signup] New user created with ID: {user_id}")
     return {"success": True, "user_id": user_id}
+
+@app.post("/recipes", response_model=RecipeOut)
+async def upload_recipe(recipe: RecipeIn):
+    # Prepare payload for Airtable
+    record = {"fields": recipe.dict()}
+
+    # Create in main Recipes table
+    resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json={"records": [record]})
+    if resp_main.status_code != 200 and resp_main.status_code != 201:
+        raise HTTPException(status_code=resp_main.status_code, detail="Failed to write to Recipes table")
+    main_data = resp_main.json().get("records", [])[0]
+    new_id = main_data.get("id")
+
+    # Create in RecipesFeed table
+    resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json={"records": [record]})
+    if resp_feed.status_code != 200 and resp_feed.status_code != 201:
+        # Rollback main table if desired or log error
+        raise HTTPException(status_code=resp_feed.status_code, detail="Failed to write to RecipesFeed table")
+    feed_data = resp_feed.json().get("records", [])[0]
+
+    # Return the record from main table with its id
+    return RecipeOut(id=new_id, **recipe.dict())
+
+@app.get("/recipes-feed", response_model=list[RecipeOut])
+async def get_recipes_feed():
+    params = {}
+    records: list[RecipeOut] = []
+
+    while True:
+        resp = requests.get(FEED_ENDPOINT, headers=HEADERS, params=params)
+        if resp.status_code != 200:
+            raise HTTPException(status_code=resp.status_code, detail="Error fetching RecipesFeed data")
+        data = resp.json()
+        for rec in data.get("records", []):
+            fields = rec.get("fields", {})
+            records.append(RecipeOut(id=rec.get("id"), **fields))
+        offset = data.get("offset")
+        if not offset:
+            break
+        params["offset"] = offset
+    return records
 
 
 @app.get("/recent-recipes")
@@ -1366,34 +1422,26 @@ def get_known_ingredients_and_dishes():
 async def upload_video(
     file: UploadFile = File(None),
     tiktok_url: str = Form(None),
-    user_id: Optional[str] = Form(None)  # <-- this must be the Airtable record ID
+    user_id: Optional[str] = Form(None)
 ):
     temp_dir = None
-    description = ""
     frames = []
-
     try:
+        # Download or save video
         if tiktok_url:
             temp_dir = tempfile.mkdtemp()
-            ydl_opts = {
-                "quiet": True,
-                "skip_download": False,
-                "outtmpl": os.path.join(temp_dir, "tiktok.%(ext)s"),
-                "format": "mp4"
-            }
+            ydl_opts = {"quiet": True, "skip_download": False,
+                        "outtmpl": os.path.join(temp_dir, "tiktok.%(ext)s"),
+                        "format": "mp4"}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(tiktok_url, download=True)
-                description = info.get("description", "") or ""
                 video_path = ydl.prepare_filename(info)
-
-        if file:
-            if not temp_dir:
-                temp_dir = tempfile.mkdtemp()
+        elif file:
+            temp_dir = tempfile.mkdtemp()
             video_path = os.path.join(temp_dir, file.filename)
             with open(video_path, "wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
-
-        if not (tiktok_url or file):
+        else:
             raise HTTPException(status_code=400, detail="Must provide a TikTok URL or video file")
 
         frames_dir = os.path.join(temp_dir, "frames")
@@ -1465,46 +1513,45 @@ async def upload_video(
         match = re.search(r"```(?:json)?\s*(.*?)\s*```", combined, re.DOTALL)
         parsed = json.loads(match.group(1).strip() if match else combined)
 
+        # Build recipe fields including video_url
         recipe_title      = parsed.get("title") or "Recipe"
-        ingredients       = parsed.get("ingredients")
-        steps             = parsed.get("steps")
+        ingredients       = parsed.get("ingredients", [])
+        steps             = parsed.get("steps", [])
         cook_time_minutes = parsed.get("cook_time_minutes")
+        video_url_field   = tiktok_url or None
 
-        # ——— BUILD YOUR AIRTABLE PAYLOAD ———
-        payload = {
-            "fields": {
-                "Title": recipe_title,
-                "Steps": json.dumps(steps),
-                "Ingredients": json.dumps(ingredients),
-                "Recipe JSON": json.dumps(parsed),
-            }
+        fields = {
+            "Title": recipe_title,
+            "Ingredients": json.dumps(ingredients),
+            "Steps": json.dumps(steps),
+            "Cook Time Minutes": cook_time_minutes,
+            "Video_URL": video_url_field,
+            "Recipe JSON": json.dumps(parsed)
         }
-
-        # **SIMPLIFIED LINKING**: just use the Airtable record-ID you passed in
         if user_id:
-            payload["fields"]["User ID"] = [user_id]
+            fields["User ID"] = [user_id]
 
-        # send it up to Airtable
-        url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
-        headers = {
-            "Authorization": f"Bearer {AIRTABLE_API_KEY}",
-            "Content-Type": "application/json"
-        }
-        response = requests.post(url, headers=headers, json=payload)
-        if response.status_code not in (200, 201):
-            logger.warning(f"[upload-video] Failed to save recipe to Airtable: {response.text}")
-            raise HTTPException(status_code=500, detail="Failed to save recipe")
+        payload = {"records": [{"fields": fields}]}
+
+        # 1) Save to main Recipes table
+        resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
+        if resp_main.status_code not in (200, 201):
+            raise HTTPException(status_code=500, detail="Failed to save recipe to Recipes table")
+
+        # 2) ALSO SAVE to RecipesFeed table
+        resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
+        if resp_feed.status_code not in (200, 201):
+            # optionally rollback main entry here
+            raise HTTPException(status_code=500, detail="Failed to save recipe to RecipesFeed table")
 
         return {
             "title": recipe_title,
             "ingredients": ingredients,
             "steps": steps,
             "cook_time_minutes": cook_time_minutes,
-            "debug": {
-                "frames_processed": len(frames),
-            }
+            "video_url": video_url_field
         }
-
+        
     except Exception as e:
         logger.error(f"[upload-video] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
