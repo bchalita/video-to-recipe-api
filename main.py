@@ -1534,7 +1534,7 @@ async def upload_video(
         cook_time_minutes = parsed.get("cook_time_minutes")
         video_url_field   = tiktok_url or None
 
-                fields = {
+        fields = {
             "Title": recipe_title,
             "Ingredients": json.dumps(ingredients),
             "Steps": json.dumps(steps),
