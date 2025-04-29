@@ -1573,12 +1573,18 @@ async def upload_video(
                 f"Passos: {'; '.join(steps)}"
             }
         ]
-        summary_resp = client.chat.completions.create(
-            model="gpt-4o",
-            messages=summary_prompt,
-            max_tokens=100
-        )
-        recipe_summary = summary_resp.choices[0].message.content.strip()
+        try:
+            summary_resp = client.chat.completions.create(
+                model="gpt-4o",
+                messages=summary_prompt,
+                max_tokens=100
+            )
+            recipe_summary = summary_resp.choices[0].message.content.strip()
+
+        except Exception as e:
+          logger.warning("Summary generation failed, continuing without it", e)
+          recipe_summary = ""
+
         
         fields = {
             "Title": recipe_title,
@@ -1593,6 +1599,10 @@ async def upload_video(
             fields["User ID"] = [user_id]
 
         payload = {"records": [{"fields": fields}]}
+
+        print("[DEBUG] Final payload to Recipes table:", payload)
+        print("[DEBUG] Final payload to Feed table:", recipe_summary)
+
 
         # Save to Recipes table
         resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
@@ -1617,6 +1627,7 @@ async def upload_video(
             "steps": steps,
             "cook_time_minutes": cook_time_minutes,
             "video_url": video_url_field,
+            "summary": recipe_summary,             # <<< and this line
             "debug": {"frames_processed": len(frames)}
         }
 
