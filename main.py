@@ -16,10 +16,10 @@ from unidecode import unidecode
 from rapidfuzz import fuzz
 from typing import Dict
 from fastapi import Query
+from openai_client import client
 from video_processing import process_video_to_recipe
 
 
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import torch
 import numpy as np
 from PIL import Image
@@ -33,7 +33,6 @@ from pydantic import BaseModel
 from starlette.responses import JSONResponse
 from email.mime.text import MIMEText
 import requests
-from openai import OpenAI
 import uuid
 from uuid import uuid4
 from schemas import UserLogin  # make sure you have UserLogin in schemas.py
@@ -80,8 +79,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-client = OpenAI()
 
 class RecipeIn(BaseModel):
     id: str
