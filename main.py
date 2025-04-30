@@ -16,6 +16,8 @@ from unidecode import unidecode
 from rapidfuzz import fuzz
 from typing import Dict
 from fastapi import Query
+from video_processing import process_video_to_recipe
+
 
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 import torch
@@ -270,42 +272,32 @@ async def upload_recipe(recipe: RecipeIn):
 async def admin_upload_video(
     x_api_key: str = Header(None),
     file: UploadFile = File(None),
-    tiktok_url: str = Form(None)
+    tiktok_url: str = Form(None),
+    # reuse your helper to auth—get_admin_key simply returns ADMIN_API_KEY
+    admin_key: str = Depends(get_admin_key),
 ):
-    # 1. Simple auth check—only enforce if you set ADMIN_API_KEY
-    ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
-    if ADMIN_API_KEY and x_api_key != ADMIN_API_KEY:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    # 2. Run your same video→recipe logic (download, frames, GPT, translation, summary…)
-    recipe_title, ingredients, steps, cook_time_minutes, video_url_field, summary_pt = \
+    # 1) your existing video→recipe logic in a helper:
+    title, ingredients, steps, cook_time, video_url, summary = \
         process_video_to_recipe(file, tiktok_url)
 
-    # 3. Build the same payload
+    # 2) build payload once (writes both tables)
     payload = build_airtable_fields(
-        recipe_title,
-        ingredients,
-        steps,
-        cook_time_minutes,
-        video_url_field,
-        recipe_summary=recipe_summary
+      title, ingredients, steps, cook_time, video_url,
+      summary=summary, user_id=None
     )
 
+    # 3a) write to Recipes
+    resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
+    if resp_main.status_code not in (200,201):
+        raise HTTPException(500, "Failed to save to Recipes")
 
-    # 4a. Write to main Recipes table
-    main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
-    if main.status_code not in (200, 201):
-        raise HTTPException(status_code=500, detail="Failed to save to Recipes")
+    # 3b) write to RecipesFeed
+    resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
+    if resp_feed.status_code not in (200,201):
+        raise HTTPException(500, "Failed to save to RecipesFeed")
 
-    # 4b. Write to RecipesFeed
-    feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
-    if feed.status_code not in (200, 201):
-        # optional: you could roll back the main insert here
-        raise HTTPException(status_code=500, detail="Failed to save to RecipesFeed")
-
-    new_id = main.json()["records"][0]["id"]
+    new_id = resp_main.json()["records"][0]["id"]
     return {"id": new_id, **payload["records"][0]["fields"]}
-    
 
 @app.get("/recipes/{recipe_id}", response_model=RecipeOut)
 async def get_recipe(recipe_id: str):
