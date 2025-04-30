@@ -20,3 +20,7 @@ HEADERS = {
 }
 RECIPES_ENDPOINT = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_RECIPES_TABLE}"
 FEED_ENDPOINT    = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}/{AIRTABLE_FEED_TABLE}"
+
+# ───── Airtable ─────
+AUTH_UID_MAP: Dict[str, str] = {}
+ 
