@@ -1,37 +1,33 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
+# schemas.py
 
-# User authentication schemas
-class UserSignup(BaseModel):
+from pydantic import BaseModel
+from typing import List, Optional
+
+class Ingredient(BaseModel):
     name: str
-    email: str
-    password: str
+    quantity: Optional[str] = None
+
+class RecipeIn(BaseModel):
+    title: str
+    ingredients: List[Ingredient]
+    steps: List[str]
+    cook_time_minutes: int
+    video_url: Optional[str] = None
+
+class RecipeOut(BaseModel):
+    id: str
+    title: str
+    ingredients: List[Ingredient]
+    steps: List[str]
+    cook_time_minutes: Optional[int]
+    video_url: Optional[str]
+    summary: Optional[str]
 
 class UserLogin(BaseModel):
     email: str
     password: str
 
-# Ingredient and Recipe schemas
-class Ingredient(BaseModel):
+class UserSignup(BaseModel):
     name: str
-    quantity: Optional[str] = None
-
-class RecipeSchema(BaseModel):
-    title: str
-    ingredients: List[Ingredient]
-    steps: List[str]
-    cook_time_minutes: Optional[int] = None
-
-# Payload for saving a recipe
-class SaveRecipePayload(BaseModel):
-    user_id: str
-    recipe: RecipeSchema
-
-# Generic Airtable record schema for responses
-class AirtableRecord(BaseModel):
-    id: str
-    fields: Dict[str, Optional[str]]
-
-# Schema for returned saved recipe records
-class SavedRecipeRecord(AirtableRecord):
-    fields: Dict[str, Optional[str]]  # includes User ID, Recipe JSON, Created At
+    email: str
+    password: str
