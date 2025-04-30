@@ -7,6 +7,13 @@ import requests, json
 from schemas import RecipeOut
 from config import AIRTABLE_BASE_ID, AIRTABLE_API_KEY, AIRTABLE_RECIPES_TABLE, AIRTABLE_RECIPES_FEED_TABLE
 
+from fastapi import APIRouter, File, UploadFile, Form, HTTPException, Depends
+from typing import Optional
+from video_processing import process_video_to_recipe
+from helpers import build_airtable_fields
+from config import RECIPES_ENDPOINT, HEADERS
+
+
 router = APIRouter()
 
 
@@ -122,3 +129,33 @@ def recent(user_id: str = Query(..., description="Airtable record ID returned fr
             summary=f.get("Recipe Summary")
         ))
     return out
+
+
+@router.post("/upload-video")
+async def upload_video(
+    file: UploadFile = File(None),
+    tiktok_url: str = Form(None),
+    user_id: Optional[str] = Form(None),
+):
+    try:
+        title, ingredients, steps, cook_time, video_url, summary = process_video_to_recipe(
+            file, tiktok_url, user_id
+        )
+        payload = build_airtable_fields(
+            title, ingredients, steps, cook_time, video_url, recipe_summary=summary, user_id=user_id
+        )
+        resp = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
+        if resp.status_code not in (200, 201):
+            raise HTTPException(500, "Failed to save recipe")
+        new_id = resp.json()["records"][0]["id"]
+        return {
+            "id": new_id,
+            "title": title,
+            "ingredients": ingredients,
+            "steps": steps,
+            "cook_time_minutes": cook_time,
+            "video_url": video_url,
+            "summary": summary,
+        }
+    except Exception as e:
+        raise HTTPException(500, str(e))
