@@ -7,6 +7,20 @@ from config import AIRTABLE_API_KEY, AIRTABLE_BASE_ID, AIRTABLE_USERS_TABLE, AUT
 
 router = APIRouter()
 
+ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+
+def get_admin_key(x_api_key: str = Header(None)):
+    """
+    FastAPI dependency that pulls X-API-Key from headers
+    and compares against your ADMIN_API_KEY.
+    """
+    if not ADMIN_API_KEY:
+        # if you haven’t set one, we’ll implicitly allow all
+        return x_api_key
+    if x_api_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return x_api_key
+
 @router.post("/login")
 def login(user: UserLogin = Body(...)):
     """
