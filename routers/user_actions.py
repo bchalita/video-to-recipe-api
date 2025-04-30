@@ -1,6 +1,5 @@
 from fastapi import APIRouter, HTTPException
 import requests, json, logging
-from schemas import UserInteraction
 from config import AIRTABLE_BASE_ID, AIRTABLE_API_KEY, AIRTABLE_USERS_TABLE, AIRTABLE_SAVED_RECIPES_TABLE, AIRTABLE_INTERACTIONS_TABLE
 
 router = APIRouter()
