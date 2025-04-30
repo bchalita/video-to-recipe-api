@@ -2,7 +2,7 @@ import os, json, tempfile, shutil, subprocess, base64, time, re
 import yt_dlp, requests
 from PIL import Image
 from torchvision import transforms, models
-from your_openai_client import client  # however you import OpenAI
+from main import client
 from fastapi import HTTPException
 
 def process_video_to_recipe(file, tiktok_url):
