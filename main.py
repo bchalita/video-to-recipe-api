@@ -263,6 +263,48 @@ async def upload_recipe(recipe: RecipeIn):
 
     # Return the record from main table with its id
     return RecipeOut(id=new_id, **recipe.dict())
+
+
+
+@app.post("/admin/upload-video")
+async def admin_upload_video(
+    x_api_key: str = Header(None),
+    file: UploadFile = File(None),
+    tiktok_url: str = Form(None)
+):
+    # 1. Simple auth check—only enforce if you set ADMIN_API_KEY
+    ADMIN_API_KEY = os.getenv("ADMIN_API_KEY")
+    if ADMIN_API_KEY and x_api_key != ADMIN_API_KEY:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    # 2. Run your same video→recipe logic (download, frames, GPT, translation, summary…)
+    recipe_title, ingredients, steps, cook_time_minutes, video_url_field, summary_pt = \
+        process_video_to_recipe(file, tiktok_url)
+
+    # 3. Build the same payload
+    payload = build_airtable_fields(
+        recipe_title,
+        ingredients,
+        steps,
+        cook_time_minutes,
+        video_url_field,
+        recipe_summary=recipe_summary
+    )
+
+
+    # 4a. Write to main Recipes table
+    main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
+    if main.status_code not in (200, 201):
+        raise HTTPException(status_code=500, detail="Failed to save to Recipes")
+
+    # 4b. Write to RecipesFeed
+    feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
+    if feed.status_code not in (200, 201):
+        # optional: you could roll back the main insert here
+        raise HTTPException(status_code=500, detail="Failed to save to RecipesFeed")
+
+    new_id = main.json()["records"][0]["id"]
+    return {"id": new_id, **payload["records"][0]["fields"]}
     
 
 @app.get("/recipes/{recipe_id}", response_model=RecipeOut)
@@ -1424,6 +1466,29 @@ def resend_rappi_cart():
         raise HTTPException(status_code=400, detail="No previous payload available")
     # Re-run with last payload
     return rappi_cart_search(**cached_last_payload)
+    
+
+def build_airtable_fields(
+    recipe_title,
+    ingredients,
+    steps,
+    cook_time_minutes,
+    video_url_field,
+    recipe_summary=None,
+    user_id=None
+):
+    fields = {
+        "Title": recipe_title,
+        "Ingredients": json.dumps(ingredients),
+        "Steps":       json.dumps(steps),
+        "Cook Time Minutes": cook_time_minutes,
+        "Video_URL":   video_url_field,
+    }
+    if recipe_summary is not None:
+        fields["Recipe Summary"] = recipe_summary
+    if user_id:
+        fields["User ID"] = [user_id]
+    return {"records":[{"fields": fields}]}
 
 
 def classify_image_multiple(images):
@@ -1586,40 +1651,22 @@ async def upload_video(
           recipe_summary = ""
 
         
-        fields = {
-            "Title": recipe_title,
-            "Ingredients": json.dumps(ingredients),
-            "Steps": json.dumps(steps),
-            "Cook Time Minutes": cook_time_minutes,
-            "Video_URL": video_url_field,
-            "Recipe JSON": json.dumps(parsed),
-            "Recipe Summary": recipe_summary 
-        }
-        if user_id:
-            fields["User ID"] = [user_id]
-
-        payload = {"records": [{"fields": fields}]}
-
-        print("[DEBUG] Final payload to Recipes table:", payload)
-        print("[DEBUG] Final payload to Feed table:", recipe_summary)
-
-
-        # Save to Recipes table
-        resp_main = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
-        if resp_main.status_code not in (200, 201):
-            raise HTTPException(status_code=500, detail="Failed to save recipe to Recipes table")
-        # Save to RecipesFeed table
-        # parse out the new record’s ID
-        main_record = resp_main.json().get("records", [])[0]
-        new_id = main_record.get("id")
+        payload = build_airtable_fields(
+            recipe_title,
+            ingredients,
+            steps,
+            cook_time_minutes,
+            video_url_field,
+            recipe_summary=recipe_summary,
+            user_id=user_id
+        )
         
-        # then write to the feed table as before
-        resp_feed = requests.post(FEED_ENDPOINT, headers=HEADERS, json=payload)
-        if resp_feed.status_code not in (200, 201):
-            raise HTTPException(...)
-
-        # Return without summary; frontend can fetch summary in GET
-    # … after resp_feed check …
+        # Save just to the main Recipes table
+        resp = requests.post(RECIPES_ENDPOINT, headers=HEADERS, json=payload)
+        if resp.status_code not in (200, 201):
+            raise HTTPException(status_code=500, detail="Failed to save recipe to Recipes table")
+        
+        new_id = resp.json()["records"][0]["id"]
         return {
             "id": new_id,
             "title": recipe_title,
@@ -1627,8 +1674,8 @@ async def upload_video(
             "steps": steps,
             "cook_time_minutes": cook_time_minutes,
             "video_url": video_url_field,
-            "summary": recipe_summary,             # <<< and this line
-            "debug": {"frames_processed": len(frames)}
+            "summary": recipe_summary,
+            "debug": {"frames_processed": len(frames)},
         }
 
     except Exception as e:
